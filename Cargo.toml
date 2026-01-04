@@ -1,0 +1,14 @@
+[package]
+name = "r-token"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+uuid = { version = "1.0", features = ["v4"] }
+actix-web = { version = "4", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+
+[features]
+# 定义一个叫 "actix" 的开关，开启它就会下载 actix-web 依赖
+actix = ["dep:actix-web"]
+default = ["actix"] # 开发方便，默认开启
