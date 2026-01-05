@@ -14,6 +14,7 @@ edition = "2024"
 uuid = { version = "1.0", features = ["v4"] }
 actix-web = { version = "4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
+chrono = "0.4.42"
 
 [features]
 # 定义一个叫 "actix" 的开关，开启它就会下载 actix-web 依赖

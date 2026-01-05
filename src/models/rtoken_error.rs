@@ -1,33 +1,30 @@
-//! Error types for the r-token authentication library.
+//! Error types for r-token.
 //!
-//! This module defines error types that can occur during token management operations.
+//! The library intentionally keeps its own error type small. It is primarily used
+//! by [`crate::RTokenManager`] methods and can also be returned from actix-web handlers
+//! because it implements `actix_web::ResponseError`.
+//!
+//! ## 繁體中文
+//!
+//! r-token 的錯誤型別。
+//!
+//! 本庫的錯誤型別刻意保持精簡，主要由 [`crate::RTokenManager`] 方法回傳。
+//! 因為實作了 `actix_web::ResponseError`，也可以直接作為 actix-web handler 的錯誤型別使用。
 
 use std::fmt::Formatter;
 
-/// Errors that can occur during token management operations.
+/// Errors returned by r-token.
 ///
-/// This error type implements `std::error::Error` and `actix_web::ResponseError`,
-/// allowing it to be used seamlessly in actix-web handlers.
+/// ## 繁體中文
 ///
-/// # Examples
-///
-/// ```rust
-/// use r_token::{RTokenManager, RTokenError};
-///
-/// let manager = RTokenManager::new();
-/// let result = manager.login("user123");
-///
-/// match result {
-///     Ok(token) => println!("Token generated: {}", token),
-///     Err(RTokenError::MutexPoisoned) => eprintln!("Failed to acquire lock"),
-/// }
-/// ```
+/// r-token 會回傳的錯誤集合。
 #[derive(Debug)]
 pub enum RTokenError {
-    /// The internal mutex protecting the token store has been poisoned.
+    /// The internal mutex has been poisoned.
     ///
-    /// This typically occurs when a thread panics while holding the lock.
-    /// In most cases, this indicates a critical error in the application.
+    /// ## 繁體中文
+    ///
+    /// 內部 mutex 發生 poisoned。
     MutexPoisoned,
 }
 

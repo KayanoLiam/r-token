@@ -1,15 +1,15 @@
 # r-token
 
-**r-token** is a lightweight, zero-boilerplate authentication library designed for Rust and `actix-web`.
+**r-token** is a small, in-memory token authentication helper for Rust + `actix-web`.
 
-Inspired by the "parameter-as-authentication" pattern, it enables secure authentication by simply adding typed extractors to your route handlers.
+It follows a “parameter-as-authentication” style: add `RUser` to your handler parameters, and the request is authenticated automatically via Actix extractors.
 
 ## Features
 
--   **Zero Boilerplate**: No manual token validation or complex middleware configuration required.
--   **Type-Safe Authentication**: Leverages Actix's `Extractor` mechanism. If an `RUser` parameter is present, the request is guaranteed to be authenticated.
--   **Thread-Safe**: Built on `Arc` and `Mutex` for safe concurrent token management.
--   **Non-Invasive**: easily integrates into existing Actix applications.
+- **Zero boilerplate**: no custom middleware required for basic header auth.
+- **Extractor-first**: declaring `RUser` protects the route.
+- **Thread-safe, shared state**: `RTokenManager` is `Clone` and shares an in-memory store.
+- **TTL support**: tokens expire based on a per-login TTL (seconds).
 
 ## Installation
 
@@ -18,40 +18,30 @@ Add r-token to your `Cargo.toml`:
 ```toml
 [dependencies]
 r-token = "0.1"
-actix-web = "4"
 ```
 
 ## Quick Start
 
-### 1. Implement Authentication Logic
+### 1. Add endpoints
 
-No manual parsing is needed. Simply inject `RUser` into your protected handlers.
+No manual header parsing is needed. Inject `RUser` into protected handlers.
 
 ```rust
 use actix_web::{get, post, web, HttpResponse, Responder};
 use r_token::{RTokenManager, RUser, RTokenError};
 
-// --- Login Endpoint ---
-// Injects the manager to generate and return a token
 #[post("/login")]
-async fn login(
-    manager: web::Data<RTokenManager>
-) -> Result<impl Responder, RTokenError> {
+async fn login(manager: web::Data<RTokenManager>) -> Result<impl Responder, RTokenError> {
     let user_id = "user_123";
-    let token = manager.login(user_id)?;
+    let token = manager.login(user_id, 3600)?;
     Ok(HttpResponse::Ok().body(token))
 }
 
-// --- Protected Endpoint ---
-// The presence of RUser guarantees authentication.
-// Unauthenticated requests are automatically rejected with 401 Unauthorized.
 #[get("/profile")]
 async fn profile(user: RUser) -> impl Responder {
     format!("Welcome, User ID: {}", user.id)
 }
 
-// --- Logout Endpoint ---
-// Requires both Manager (state) and RUser (auth context)
 #[post("/logout")]
 async fn logout(
     manager: web::Data<RTokenManager>,
@@ -68,6 +58,7 @@ Initialize `RTokenManager` and register it with your Actix application.
 
 ```rust
 use actix_web::{web, App, HttpServer};
+use r_token::RTokenManager;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -84,6 +75,15 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
+```
+
+## Authorization header
+
+The extractor reads the token from `Authorization` and supports:
+
+```text
+Authorization: <token>
+Authorization: Bearer <token>
 ```
 
 ## Usage Examples
@@ -109,7 +109,7 @@ curl -H "Authorization: <token>" http://127.0.0.1:8080/profile
 
 -   [x] Basic In-Memory Token Management
 -   [x] `Authorization` Header Support
--   [ ] Token Expiration (TTL)
+-   [x] Token Expiration (TTL)
 -   [ ] Persistent Storage (Redis)
 -   [ ] Role-Based Access Control (RBAC)
 -   [ ] Cookie Support
