@@ -13,6 +13,7 @@ pub struct RTokenInfo {
     /// ## 繁體中文
     ///
     /// 與 token 綁定的使用者 id。
+    #[allow(unused)]
     pub user_id: String,
     #[allow(unused)]
     /// Expiration timestamp in Unix epoch milliseconds.

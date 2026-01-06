@@ -40,11 +40,17 @@
 //! 4. 任何 handler 只要宣告 [`RUser`] 參數即視為受保護端點；Extractor 成功才會進入 handler。
 
 mod models;
+#[cfg(feature = "redis")]
+mod redis;
 
 pub use crate::models::RTokenError;
+#[cfg(feature = "redis")]
+pub use crate::redis::RTokenRedisManager;
 use crate::models::RTokenInfo;
+#[cfg(feature = "actix")]
 use actix_web::{FromRequest, HttpRequest, web};
 use chrono::Utc;
+#[cfg(feature = "actix")]
 use std::future::{Ready, ready};
 use std::{
     collections::HashMap,
@@ -171,6 +177,7 @@ impl RTokenManager {
 /// token 會從 `Authorization` header 讀取，支援以下格式：
 /// - `Authorization: <token>`
 /// - `Authorization: Bearer <token>`
+#[cfg(feature = "actix")]
 #[derive(Debug)]
 pub struct RUser {
     /// The user id associated with the token.
@@ -201,6 +208,7 @@ pub struct RUser {
 /// 失敗情況：
 /// - 500：`app_data` 中找不到管理器，或 mutex poisoned
 /// - 401：token 缺失、無效、或已過期
+#[cfg(feature = "actix")]
 impl FromRequest for RUser {
     type Error = actix_web::Error;
     type Future = Ready<Result<Self, Self::Error>>;

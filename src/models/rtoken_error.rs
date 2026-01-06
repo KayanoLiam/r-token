@@ -38,4 +38,5 @@ impl std::fmt::Display for RTokenError {
 
 impl std::error::Error for RTokenError {}
 
+#[cfg(feature = "actix")]
 impl actix_web::ResponseError for RTokenError {}

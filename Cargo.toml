@@ -15,8 +15,25 @@ uuid = { version = "1.0", features = ["v4"] }
 actix-web = { version = "4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 chrono = "0.4.42"
+redis = { version = "1.0.2", optional = true, features = ["tokio-comp", "connection-manager"] }
+tokio = { version = "1", optional = true, features = ["sync"] }
 
 [features]
 # 定义一个叫 "actix" 的开关，开启它就会下载 actix-web 依赖
 actix = ["dep:actix-web"]
 default = ["actix"] # 开发方便，默认开启
+redis = ["dep:redis","dep:tokio"]
+redis-actix = ["redis", "actix"]
+
+[[bin]]
+name = "r-token"
+path = "src/main.rs"
+required-features = ["actix"]
+
+[[bin]]
+name = "r-token-redis"
+path = "src/bin/redis_main.rs"
+required-features = ["redis-actix"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
