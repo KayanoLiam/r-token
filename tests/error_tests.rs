@@ -67,7 +67,7 @@ mod actix_error_tests {
         ) -> Result<HttpResponse, RTokenError> {
             // Simulate an error by attempting to force a mutex error scenario
             // In normal usage, this would be quite rare
-            let _token = manager.login("test_user")?;
+            let _token = manager.login("test_user", 3600)?;
             Ok(HttpResponse::Ok().finish())
         }
 

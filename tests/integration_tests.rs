@@ -2,7 +2,7 @@
 //!
 //! These tests verify the complete functionality of r-token in realistic scenarios.
 
-use actix_web::{App, HttpResponse, get, post, test as actix_test, web};
+use actix_web::{get, post, test as actix_test, web, App, HttpResponse};
 use r_token::{RTokenError, RTokenManager, RUser};
 use std::sync::Arc;
 use std::thread;
@@ -12,7 +12,7 @@ use std::thread;
 #[test]
 fn login_generates_valid_token() {
     let manager = RTokenManager::new();
-    let result = manager.login("user_123");
+    let result = manager.login("user_123", 3600);
 
     assert!(result.is_ok());
     let token = result.unwrap();
@@ -26,8 +26,8 @@ fn login_generates_valid_token() {
 fn login_creates_unique_tokens() {
     let manager = RTokenManager::new();
 
-    let token1 = manager.login("user_1").unwrap();
-    let token2 = manager.login("user_1").unwrap();
+    let token1 = manager.login("user_1", 3600).unwrap();
+    let token2 = manager.login("user_1", 3600).unwrap();
 
     // Even for the same user, tokens should be unique
     assert_ne!(token1, token2);
@@ -36,7 +36,7 @@ fn login_creates_unique_tokens() {
 #[test]
 fn logout_succeeds() {
     let manager = RTokenManager::new();
-    let token = manager.login("user_456").unwrap();
+    let token = manager.login("user_456", 3600).unwrap();
 
     let result = manager.logout(&token);
     assert!(result.is_ok());
@@ -55,9 +55,9 @@ fn logout_nonexistent_token() {
 fn multiple_users() {
     let manager = RTokenManager::new();
 
-    let token1 = manager.login("alice").unwrap();
-    let token2 = manager.login("bob").unwrap();
-    let token3 = manager.login("charlie").unwrap();
+    let token1 = manager.login("alice", 3600).unwrap();
+    let token2 = manager.login("bob", 3600).unwrap();
+    let token3 = manager.login("charlie", 3600).unwrap();
 
     assert_ne!(token1, token2);
     assert_ne!(token2, token3);
@@ -76,7 +76,7 @@ fn concurrent_logins() {
         let manager_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
             let user_id = format!("user_{}", i);
-            manager_clone.login(&user_id)
+            manager_clone.login(&user_id, 3600)
         });
         handles.push(handle);
     }
@@ -106,7 +106,7 @@ fn concurrent_logout() {
 
     // Create tokens first
     let tokens: Vec<String> = (0..10)
-        .map(|i| manager.login(&format!("user_{}", i)).unwrap())
+        .map(|i| manager.login(&format!("user_{}", i), 3600).unwrap())
         .collect();
 
     let mut handles = vec![];
@@ -186,7 +186,7 @@ async fn protected_route_with_valid_token() {
     }
 
     let manager = RTokenManager::new();
-    let token = manager.login("test_user").unwrap();
+    let token = manager.login("test_user", 3600).unwrap();
 
     let app = actix_test::init_service(
         App::new()
@@ -217,7 +217,7 @@ async fn protected_route_with_bearer_token() {
     }
 
     let manager = RTokenManager::new();
-    let token = manager.login("bearer_user").unwrap();
+    let token = manager.login("bearer_user", 3600).unwrap();
 
     let app = actix_test::init_service(
         App::new()
@@ -241,13 +241,41 @@ async fn protected_route_with_bearer_token() {
 }
 
 #[actix_web::test]
+async fn protected_route_with_expired_token() {
+    #[get("/protected")]
+    async fn protected(user: RUser) -> impl actix_web::Responder {
+        HttpResponse::Ok().body(format!("User: {}", user.id))
+    }
+
+    let manager = RTokenManager::new();
+    let token = manager.login("expired_user", 0).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    let app = actix_test::init_service(
+        App::new()
+            .app_data(web::Data::new(manager))
+            .service(protected),
+    )
+    .await;
+
+    let req = actix_test::TestRequest::get()
+        .uri("/protected")
+        .insert_header(("Authorization", token.as_str()))
+        .to_request();
+
+    let resp = actix_test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 401);
+}
+
+#[actix_web::test]
 async fn complete_authentication_flow() {
     #[post("/login")]
     async fn login(
         manager: web::Data<RTokenManager>,
         body: String,
     ) -> Result<HttpResponse, RTokenError> {
-        let token = manager.login(&body)?;
+        let token = manager.login(&body, 3600)?;
         Ok(HttpResponse::Ok().body(token))
     }
 
@@ -323,7 +351,7 @@ async fn complete_authentication_flow() {
 #[test]
 fn empty_user_id() {
     let manager = RTokenManager::new();
-    let result = manager.login("");
+    let result = manager.login("", 3600);
 
     // Should still work (empty string is valid)
     assert!(result.is_ok());
@@ -343,7 +371,7 @@ fn special_characters_in_user_id() {
     ];
 
     for user_id in special_ids {
-        let result = manager.login(user_id);
+        let result = manager.login(user_id, 3600);
         assert!(result.is_ok(), "Failed for user_id: {}", user_id);
     }
 }
@@ -353,7 +381,7 @@ fn very_long_user_id() {
     let manager = RTokenManager::new();
     let long_id = "a".repeat(10000);
 
-    let result = manager.login(&long_id);
+    let result = manager.login(&long_id, 3600);
     assert!(result.is_ok());
 }
 
@@ -384,7 +412,7 @@ fn manager_clone_shares_state() {
     let manager2 = manager1.clone();
 
     // Login with manager1
-    let token = manager1.login("shared_user").unwrap();
+    let token = manager1.login("shared_user", 3600).unwrap();
 
     // Logout with manager2 (should work because they share state)
     let result = manager2.logout(&token);
@@ -394,6 +422,6 @@ fn manager_clone_shares_state() {
 #[test]
 fn default_implementation() {
     let manager: RTokenManager = Default::default();
-    let result = manager.login("default_user");
+    let result = manager.login("default_user", 3600);
     assert!(result.is_ok());
 }

@@ -20,7 +20,7 @@ mod performance {
 
         for i in 0..iterations {
             let user_id = format!("user_{}", i);
-            manager.login(&user_id).unwrap();
+            manager.login(&user_id, 3600).unwrap();
         }
 
         let duration = start.elapsed();
@@ -39,7 +39,7 @@ mod performance {
 
         // First, create tokens
         let tokens: Vec<String> = (0..iterations)
-            .map(|i| manager.login(&format!("user_{}", i)).unwrap())
+            .map(|i| manager.login(&format!("user_{}", i), 3600).unwrap())
             .collect();
 
         let start = Instant::now();
@@ -68,7 +68,7 @@ mod performance {
                 thread::spawn(move || {
                     for i in 0..operations_per_thread {
                         let user_id = format!("thread_{}_user_{}", thread_id, i);
-                        let token = manager_clone.login(&user_id).unwrap();
+                        let token = manager_clone.login(&user_id, 3600).unwrap();
 
                         // Simulate some work
                         thread::yield_now();
@@ -104,7 +104,7 @@ mod performance {
         let mut tokens = Vec::with_capacity(num_tokens);
 
         for i in 0..num_tokens {
-            let token = manager.login(&format!("user_{}", i)).unwrap();
+            let token = manager.login(&format!("user_{}", i), 3600).unwrap();
             tokens.push(token);
         }
 
@@ -129,7 +129,7 @@ mod performance {
             let user_id = format!("cycling_user_{}", i);
 
             // Login
-            let token = manager.login(&user_id).unwrap();
+            let token = manager.login(&user_id, 3600).unwrap();
 
             // Immediately logout
             manager.logout(&token).unwrap();
@@ -180,7 +180,7 @@ mod performance {
 
                     // All threads hit the manager at the same time
                     let user_id = format!("concurrent_user_{}", thread_id);
-                    manager_clone.login(&user_id).unwrap()
+                    manager_clone.login(&user_id, 3600).unwrap()
                 })
             })
             .collect();
