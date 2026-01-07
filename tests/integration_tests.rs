@@ -2,8 +2,7 @@
 //!
 //! These tests verify the complete functionality of r-token in realistic scenarios.
 
-use actix_web::{get, post, test as actix_test, web, App, HttpResponse};
-use r_token::{RTokenError, RTokenManager, RUser};
+use r_token::RTokenManager;
 use std::sync::Arc;
 use std::thread;
 
@@ -125,225 +124,234 @@ fn concurrent_logout() {
     }
 }
 
-// ============ actix-web Integration Tests ============
+#[cfg(feature = "actix")]
+mod actix_integration_tests {
+    use super::*;
+    use actix_web::{get, post, test as actix_test, web, App, HttpResponse};
+    use r_token::{RTokenError, RUser};
 
-#[actix_web::test]
-async fn protected_route_without_token() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
+    #[actix_web::test]
+    async fn protected_route_without_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
+
+        let manager = RTokenManager::new();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::get().uri("/protected").to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 
-    let manager = RTokenManager::new();
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(protected),
-    )
-    .await;
+    #[actix_web::test]
+    async fn protected_route_with_invalid_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
 
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .to_request();
+        let manager = RTokenManager::new();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
 
-    let resp = actix_test::call_service(&app, req).await;
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", "invalid-token-xyz"))
+            .to_request();
 
-    // Should return 401 Unauthorized
-    assert_eq!(resp.status(), 401);
-}
-
-#[actix_web::test]
-async fn protected_route_with_invalid_token() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 
-    let manager = RTokenManager::new();
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(protected),
-    )
-    .await;
+    #[actix_web::test]
+    async fn protected_route_with_valid_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
 
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .insert_header(("Authorization", "invalid-token-xyz"))
-        .to_request();
+        let manager = RTokenManager::new();
+        let token = manager.login("test_user", 3600).unwrap();
 
-    let resp = actix_test::call_service(&app, req).await;
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
 
-    // Should return 401 Unauthorized
-    assert_eq!(resp.status(), 401);
-}
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", token.as_str()))
+            .to_request();
 
-#[actix_web::test]
-async fn protected_route_with_valid_token() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body = actix_test::read_body(resp).await;
+        assert_eq!(body, "User: test_user");
     }
 
-    let manager = RTokenManager::new();
-    let token = manager.login("test_user", 3600).unwrap();
+    #[actix_web::test]
+    async fn protected_route_with_bearer_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
 
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(protected),
-    )
-    .await;
+        let manager = RTokenManager::new();
+        let token = manager.login("bearer_user", 3600).unwrap();
 
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .insert_header(("Authorization", token.as_str()))
-        .to_request();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
 
-    let resp = actix_test::call_service(&app, req).await;
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
 
-    // Should return 200 OK
-    assert_eq!(resp.status(), 200);
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
 
-    let body = actix_test::read_body(resp).await;
-    assert_eq!(body, "User: test_user");
-}
-
-#[actix_web::test]
-async fn protected_route_with_bearer_token() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
+        let body = actix_test::read_body(resp).await;
+        assert_eq!(body, "User: bearer_user");
     }
 
-    let manager = RTokenManager::new();
-    let token = manager.login("bearer_user", 3600).unwrap();
+    #[actix_web::test]
+    async fn protected_route_with_expired_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
 
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(protected),
-    )
-    .await;
+        let manager = RTokenManager::new();
+        let token = manager.login("expired_user", 0).unwrap();
 
-    // Test with "Bearer " prefix
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .insert_header(("Authorization", format!("Bearer {}", token)))
-        .to_request();
+        std::thread::sleep(std::time::Duration::from_millis(2));
 
-    let resp = actix_test::call_service(&app, req).await;
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
 
-    assert_eq!(resp.status(), 200);
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", token.as_str()))
+            .to_request();
 
-    let body = actix_test::read_body(resp).await;
-    assert_eq!(body, "User: bearer_user");
-}
-
-#[actix_web::test]
-async fn protected_route_with_expired_token() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 
-    let manager = RTokenManager::new();
-    let token = manager.login("expired_user", 0).unwrap();
+    #[actix_web::test]
+    async fn complete_authentication_flow() {
+        #[post("/login")]
+        async fn login(
+            manager: web::Data<RTokenManager>,
+            body: String,
+        ) -> Result<HttpResponse, RTokenError> {
+            let token = manager.login(&body, 3600)?;
+            Ok(HttpResponse::Ok().body(token))
+        }
 
-    std::thread::sleep(std::time::Duration::from_millis(2));
+        #[get("/profile")]
+        async fn profile(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("Profile: {}", user.id))
+        }
 
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(protected),
-    )
-    .await;
+        #[post("/logout")]
+        async fn logout(
+            manager: web::Data<RTokenManager>,
+            user: RUser,
+        ) -> Result<HttpResponse, RTokenError> {
+            manager.logout(&user.token)?;
+            Ok(HttpResponse::Ok().body("Logged out"))
+        }
 
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .insert_header(("Authorization", token.as_str()))
-        .to_request();
+        let manager = RTokenManager::new();
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(login)
+                .service(profile)
+                .service(logout),
+        )
+        .await;
 
-    let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 401);
-}
+        let req = actix_test::TestRequest::post()
+            .uri("/login")
+            .set_payload("alice")
+            .to_request();
 
-#[actix_web::test]
-async fn complete_authentication_flow() {
-    #[post("/login")]
-    async fn login(
-        manager: web::Data<RTokenManager>,
-        body: String,
-    ) -> Result<HttpResponse, RTokenError> {
-        let token = manager.login(&body, 3600)?;
-        Ok(HttpResponse::Ok().body(token))
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let token = String::from_utf8(actix_test::read_body(resp).await.to_vec()).unwrap();
+        assert_eq!(token.len(), 36);
+
+        let req = actix_test::TestRequest::get()
+            .uri("/profile")
+            .insert_header(("Authorization", token.as_str()))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body = actix_test::read_body(resp).await;
+        assert_eq!(body, "Profile: alice");
+
+        let req = actix_test::TestRequest::post()
+            .uri("/logout")
+            .insert_header(("Authorization", token.as_str()))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let req = actix_test::TestRequest::get()
+            .uri("/profile")
+            .insert_header(("Authorization", token.as_str()))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
     }
 
-    #[get("/profile")]
-    async fn profile(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("Profile: {}", user.id))
+    #[actix_web::test]
+    async fn missing_token_manager() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
+
+        let app = actix_test::init_service(App::new().service(protected)).await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", "some-token"))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 500);
     }
-
-    #[post("/logout")]
-    async fn logout(
-        manager: web::Data<RTokenManager>,
-        user: RUser,
-    ) -> Result<HttpResponse, RTokenError> {
-        manager.logout(&user.token)?;
-        Ok(HttpResponse::Ok().body("Logged out"))
-    }
-
-    let manager = RTokenManager::new();
-    let app = actix_test::init_service(
-        App::new()
-            .app_data(web::Data::new(manager))
-            .service(login)
-            .service(profile)
-            .service(logout),
-    )
-    .await;
-
-    // Step 1: Login
-    let req = actix_test::TestRequest::post()
-        .uri("/login")
-        .set_payload("alice")
-        .to_request();
-
-    let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-
-    let token = String::from_utf8(actix_test::read_body(resp).await.to_vec()).unwrap();
-    assert_eq!(token.len(), 36);
-
-    // Step 2: Access protected route with token
-    let req = actix_test::TestRequest::get()
-        .uri("/profile")
-        .insert_header(("Authorization", token.as_str()))
-        .to_request();
-
-    let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-
-    let body = actix_test::read_body(resp).await;
-    assert_eq!(body, "Profile: alice");
-
-    // Step 3: Logout
-    let req = actix_test::TestRequest::post()
-        .uri("/logout")
-        .insert_header(("Authorization", token.as_str()))
-        .to_request();
-
-    let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 200);
-
-    // Step 4: Try to access protected route again (should fail)
-    let req = actix_test::TestRequest::get()
-        .uri("/profile")
-        .insert_header(("Authorization", token.as_str()))
-        .to_request();
-
-    let resp = actix_test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 401);
 }
 
 // ============ Edge Cases ============
@@ -383,27 +391,6 @@ fn very_long_user_id() {
 
     let result = manager.login(&long_id, 3600);
     assert!(result.is_ok());
-}
-
-#[actix_web::test]
-async fn missing_token_manager() {
-    #[get("/protected")]
-    async fn protected(user: RUser) -> impl actix_web::Responder {
-        HttpResponse::Ok().body(format!("User: {}", user.id))
-    }
-
-    // Don't register the token manager
-    let app = actix_test::init_service(App::new().service(protected)).await;
-
-    let req = actix_test::TestRequest::get()
-        .uri("/protected")
-        .insert_header(("Authorization", "some-token"))
-        .to_request();
-
-    let resp = actix_test::call_service(&app, req).await;
-
-    // Should return 500 Internal Server Error
-    assert_eq!(resp.status(), 500);
 }
 
 #[test]

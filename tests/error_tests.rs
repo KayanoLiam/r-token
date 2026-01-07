@@ -53,7 +53,7 @@ mod error_handling {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "actix"))]
 mod actix_error_tests {
     use super::*;
     use actix_web::{App, HttpResponse, post, test, web};

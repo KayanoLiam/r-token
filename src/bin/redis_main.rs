@@ -158,24 +158,34 @@ async fn do_logout(
 /// 啟動 Redis/Valkey 版本的範例伺服器。
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // 讀取 Redis/Valkey 連線字串：允許透過環境變數覆蓋，否則使用本機預設。
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    // 讀取 Redis key 前綴：用來隔離不同應用/環境的 token key（避免互相覆蓋）。
     let prefix = std::env::var("R_TOKEN_PREFIX").unwrap_or_else(|_| "r_token:token:".to_string());
 
+    // 建立 Redis/Valkey 管理器：內部會建立連線管理器並保存 prefix。
     let manager = RTokenRedisManager::connect(&redis_url, prefix)
         .await
+        // 把 Redis 連線錯誤轉成 std::io::Error，讓 main 的返回型別保持簡單（方便示例）。
         .map_err(|_| std::io::Error::other("Redis connect failed"))?;
 
+    // 提示啟動成功，方便用 curl 直接測試。
     println!("r-token (redis) server started at http://127.0.0.1:8081");
 
+    // 啟動 Actix HTTP 伺服器：用 move 把 manager 捕獲進工廠閉包（每個 worker 都能 clone 使用）。
     HttpServer::new(move || {
         actix_web::App::new()
+            // 把 manager 放到 app state，handler 才能用 web::Data<RTokenRedisManager> 取到它。
             .app_data(web::Data::new(manager.clone()))
+            // 註冊路由：/login（簽發 token）、/info（驗證 token）、/logout（註銷 token）。
             .service(do_login)
             .service(do_info)
             .service(do_logout)
     })
+    // 綁定監聽地址：示例固定在本機 8081。
     .bind("127.0.0.1:8081")?
+    // 開始跑 event loop；await 直到伺服器停止（或發生錯誤）。
     .run()
     .await
 }
