@@ -1039,7 +1039,6 @@ dependencies = [
  "actix-web",
  "chrono",
  "redis",
- "serde",
  "tokio",
  "uuid",
 ]

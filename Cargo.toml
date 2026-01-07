@@ -4,6 +4,8 @@ version = "0.1.4"
 authors = ["Kayano <Kayano04@outlook.jp>"]
 description = "A simple and efficient token generation library for Rust, ideal for API authentication and session management."
 license = "MIT"
+documentation = "https://docs.rs/r-token"
+homepage = "https://github.com/KayanoLiam/r-token"
 repository = "https://github.com/KayanoLiam/r-token.git"
 readme = "README.md"
 keywords = ["token", "uuid", "api", "web"]
@@ -13,7 +15,7 @@ edition = "2024"
 [dependencies]
 uuid = { version = "1.0", features = ["v4"] }
 actix-web = { version = "4", optional = true }
-serde = { version = "1.0", features = ["derive"] }
+#serde = { version = "1.0", features = ["derive"] }
 chrono = "0.4.42"
 redis = { version = "1.0.2", optional = true, features = ["tokio-comp", "connection-manager"] }
 tokio = { version = "1", optional = true, features = ["sync"] }
