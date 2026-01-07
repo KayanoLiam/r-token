@@ -15,13 +15,17 @@ It follows a “parameter-as-authentication” style: add `RUser` to your handle
 >
 > This project is currently in active development and is **not recommended for production use**. The API may change, and there may be security vulnerabilities that have not been discovered or addressed. Please use this library at your own risk.
 
+> **📝 Documentation Notice**
+>
+> This project is in active development, and the documentation on [docs.rs](https://docs.rs/r-token/latest/r_token/) and this README may not always be up-to-date. Please refer to the source code for the most accurate and current information. This will be resolved when a stable release is published.
+
 ## Installation
 
 Add r-token to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-r-token = "0.1"
+r-token = "0.1.4"
 ```
 
 ## Quick Start
