@@ -29,6 +29,10 @@ For `actix-web`, r-token follows a “parameter-as-authentication” style: add 
 
 This project is in active development. Review the source code and tests before adopting it in security-sensitive environments.
 
+This project has not yet released version 1.0.0 and is not recommended for use in any production-level projects. The current state should be considered experimental and potentially unstable.
+
+Please note that this project has not been officially released. Both the documentation on docs.rs and this README file may not always reflect the latest changes in the source code. Always refer to the actual source code for the most accurate information. This documentation inconsistency will be resolved upon official release.
+
 ## Installation
 
 Add r-token to your `Cargo.toml`:
