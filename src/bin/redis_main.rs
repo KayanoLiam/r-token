@@ -65,12 +65,21 @@ use r_token::RTokenRedisManager;
 /// - `Authorization: <token>`
 /// - `Authorization: Bearer <token>`
 fn extract_token(req: &HttpRequest) -> Result<String, actix_web::Error> {
+    // 這個函式的目的：把 HTTP 請求裡的 Authorization header 解析成 token 字串。
+    // 之後 login/info/logout 都會用到同一套解析規則，集中在這裡避免重複與不一致。
+    //
+    // 支援兩種常見格式：
+    // - Authorization: <token>
+    // - Authorization: Bearer <token>
     let token = req
         .headers()
+        // 從 header map 取出 Authorization 這個欄位（如果沒有就回 401）。
         .get("Authorization")
+        // HeaderValue 轉成 &str；如果不是合法 UTF-8，就當作沒有 token（回 401）。
         .and_then(|h| h.to_str().ok())
         .ok_or_else(|| actix_web::error::ErrorUnauthorized("Unauthorized"))?;
 
+    // 如果有 Bearer 前綴就剝掉，回傳乾淨的 token。
     Ok(token.strip_prefix("Bearer ").unwrap_or(token).to_string())
 }
 

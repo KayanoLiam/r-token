@@ -11,6 +11,10 @@ It follows a “parameter-as-authentication” style: add `RUser` to your handle
 - **Thread-safe, shared state**: `RTokenManager` is `Clone` and shares an in-memory store.
 - **TTL support**: tokens expire based on a per-login TTL (seconds).
 
+> **⚠️ Production Warning**
+>
+> This project is currently in active development and is **not recommended for production use**. The API may change, and there may be security vulnerabilities that have not been discovered or addressed. Please use this library at your own risk.
+
 ## Installation
 
 Add r-token to your `Cargo.toml`:

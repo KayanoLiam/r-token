@@ -28,7 +28,26 @@ use tokio::sync::Mutex;
 /// 來控制到期時間。
 #[derive(Clone)]
 pub struct RTokenRedisManager {
+    // Redis 里 token key 的前缀。
+    // 例如 prefix="r_token:token:"，token="abc" 时，最终 key 为 "r_token:token:abc"。
+    //
+    // 这样做的目的：
+    // 1) 避免不同项目/不同环境的 key 冲突
+    // 2) 方便后续做批量清理或按前缀筛选
     prefix: String,
+
+    // 共享的异步连接管理器（Redis/Valkey 兼容）。
+    //
+    // 为什么用 Arc：
+    // - actix-web 的 app_data 里通常会 clone manager 放到多个 worker/handler 使用
+    // - clone 时我们只想增加引用计数，而不是复制连接
+    //
+    // 为什么用 tokio::Mutex：
+    // - ConnectionManager 不是 “每个方法都可并发安全调用” 的句柄
+    // - 用 Mutex 保证同一时刻只有一个任务在使用这条连接
+    //
+    // 说明：这种写法实现最简单，但高并发下会形成串行瓶颈。
+    // 如果追求更高吞吐，后续可以换成连接池（每次从池中拿一条连接）。
     connection: Arc<Mutex<redis::aio::ConnectionManager>>,
 }
 
@@ -63,7 +82,15 @@ impl RTokenRedisManager {
         redis_url: &str,
         prefix: impl Into<String>,
     ) -> Result<Self, redis::RedisError> {
+        // redis_url 支持如：
+        // - redis://127.0.0.1/
+        // - redis://:password@127.0.0.1/0
+        //
+        // Valkey 也兼容 Redis 协议，因此同样可以使用 redis crate 连接。
         let client = redis::Client::open(redis_url)?;
+
+        // ConnectionManager 会在底层连接断开后自动尝试重连（以 redis crate 的实现为准），
+        // 对示例场景比较友好。
         let connection = client.get_connection_manager().await?;
         Ok(Self::new(prefix, connection))
     }
@@ -74,6 +101,7 @@ impl RTokenRedisManager {
     ///
     /// 依照 prefix 組合 token 的 Redis key。
     fn key(&self, token: &str) -> String {
+        // 这里我们约定 prefix 总是以 ':' 结尾，因此直接拼接即可。
         format!("{}{}", self.prefix, token)
     }
 
@@ -92,9 +120,18 @@ impl RTokenRedisManager {
         user_id: &str,
         ttl_seconds: u64,
     ) -> Result<String, redis::RedisError> {
+        // token 的生成策略与内存版一致：UUID v4 字符串。
+        // 生产环境如果担心 Redis 泄露导致 token 可被直接利用，可以考虑存储 hash(token) 作为 key。
         let token = uuid::Uuid::new_v4().to_string();
         let key = self.key(&token);
+
+        // 获取连接使用权（这里会 await，表示可能等待其他任务释放锁）。
         let mut connection = self.connection.lock().await;
+
+        // SETEX 语义：SET key value 并设置 TTL（秒）。
+        // 这里 value 只存 user_id，过期交给 Redis TTL 来处理，避免应用层自己算 expire_at。
+        //
+        // `let _: () = ...` 是为了让类型推导明确知道我们不关心返回值，只要命令成功即可。
         let _: () = connection.set_ex(key, user_id, ttl_seconds).await?;
         Ok(token)
     }
@@ -111,6 +148,11 @@ impl RTokenRedisManager {
     pub async fn logout(&self, token: &str) -> Result<(), redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
+
+        // DEL 返回实际删除的 key 数量：
+        // - 1 表示删除成功
+        // - 0 表示 key 不存在
+        // 这里不关心这个数量，因为 logout 需要保持幂等。
         let _: i64 = connection.del(key).await?;
         Ok(())
     }
@@ -127,6 +169,10 @@ impl RTokenRedisManager {
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
+
+        // GET key：
+        // - Some(user_id) => token 有效
+        // - None => token 不存在或已过期（TTL 到了被 Redis 自动删掉）
         let user_id: Option<String> = connection.get(key).await?;
         Ok(user_id)
     }
