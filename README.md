@@ -39,7 +39,7 @@ Add r-token to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-r-token = "0.1.4"
+r-token = "0.1.5"
 ```
 
 ## Feature flags
@@ -49,17 +49,28 @@ r-token uses Cargo features to keep dependencies optional:
 - `actix` (default): enables the `RUser` extractor and actix-web integration.
 - `redis`: enables Redis/Valkey support via the `redis` crate.
 - `redis-actix`: convenience feature = `redis` + `actix`.
+- `rbac`: enables role-based access control (RBAC) support.
 
 Examples:
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.4", default-features = false }
+r-token = { version = "0.1.5", default-features = false }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.4", features = ["redis-actix"] }
+r-token = { version = "0.1.5", features = ["redis-actix"] }
+```
+
+```toml
+[dependencies]
+r-token = { version = "0.1.5", features = ["rbac"] }
+```
+
+```toml
+[dependencies]
+r-token = { version = "0.1.5", features = ["redis-actix", "rbac"] }
 ```
 
 ## Authorization header
@@ -85,6 +96,18 @@ Actix integration (requires `actix`, enabled by default):
 Redis backend (requires `redis`):
 
 - `RTokenRedisManager`: issues, validates, and revokes tokens backed by Redis/Valkey.
+
+RBAC support (requires `rbac`):
+
+- `RTokenManager::login_with_roles()`: issues a token with associated roles.
+- `RTokenManager::set_roles()`: updates roles for an existing token.
+- `RTokenManager::get_roles()`: retrieves roles for a token.
+- `RUser.roles`: vector of roles associated with the authenticated user.
+- `RUser::has_role()`: checks if the user has a specific role.
+- `RTokenRedisManager::login_with_roles()`: issues a token with roles in Redis.
+- `RTokenRedisManager::set_roles()`: updates roles for a token in Redis.
+- `RTokenRedisManager::get_roles()`: retrieves roles for a token in Redis.
+- `RTokenRedisManager::validate()`: returns both `user_id` and `roles` when RBAC is enabled.
 
 ## In-memory usage (actix-web)
 
@@ -145,6 +168,92 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
+## RBAC usage (role-based access control)
+
+When the `rbac` feature is enabled, you can assign roles to tokens and perform role-based authorization.
+
+### In-memory RBAC
+
+```rust
+use r_token::{RTokenManager, RUser, RTokenError};
+use actix_web::{get, post, web, HttpResponse, Responder};
+
+#[post("/login")]
+async fn login(
+    manager: web::Data<RTokenManager>,
+    body: String,
+) -> Result<impl Responder, RTokenError> {
+    // Parse user_id and roles from request body
+    let parts: Vec<&str> = body.split(':').collect();
+    let user_id = parts[0];
+    let roles: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+
+    let token = manager.login_with_roles(user_id, 3600, roles)?;
+    Ok(HttpResponse::Ok().body(token))
+}
+
+#[get("/admin")]
+async fn admin_only(user: RUser) -> impl Responder {
+    if user.has_role("admin") {
+        HttpResponse::Ok().body(format!("Welcome, admin {}", user.id))
+    } else {
+        HttpResponse::Forbidden().body("Access denied: admin role required")
+    }
+}
+
+#[post("/promote")]
+async fn promote(
+    manager: web::Data<RTokenManager>,
+    user: RUser,
+) -> Result<impl Responder, RTokenError> {
+    // Only admins can promote users
+    if !user.has_role("admin") {
+        return Ok(HttpResponse::Forbidden().body("Access denied"));
+    }
+
+    // Add 'moderator' role to the current user
+    manager.set_roles(&user.token, vec!["admin".to_string(), "moderator".to_string()])?;
+    Ok(HttpResponse::Ok().body("Promoted to moderator"))
+}
+
+#[get("/roles")]
+async fn get_user_roles(user: RUser) -> impl Responder {
+    HttpResponse::Ok().json(&user.roles)
+}
+```
+
+### Redis RBAC
+
+```rust
+use r_token::RTokenRedisManager;
+
+#[tokio::main]
+async fn main() -> Result<(), redis::RedisError> {
+    let manager = RTokenRedisManager::connect("redis://127.0.0.1/", "r_token:token:")
+        .await?;
+
+    // Create token with roles
+    let roles = vec!["admin".to_string(), "editor".to_string()];
+    let token = manager.login_with_roles("alice", 3600, roles).await?;
+
+    // Validate and get user info with roles
+    let user_info = manager.validate(&token).await?;
+    if let Some((user_id, retrieved_roles)) = user_info {
+        println!("User: {}, Roles: {:?}", user_id, retrieved_roles);
+    }
+
+    // Update roles
+    manager.set_roles(&token, vec!["admin".to_string()]).await?;
+
+    // Get roles only
+    let roles = manager.get_roles(&token).await?;
+    println!("Roles: {:?}", roles);
+
+    manager.logout(&token).await?;
+    Ok(())
+}
+```
+
 ## Behavioral details
 
 In-memory manager:
@@ -156,6 +265,8 @@ In-memory manager:
 Actix extractor:
 
 - On success, `RUser` provides `id` and the raw `token`.
+- When RBAC is enabled, `RUser` also provides `roles` (a vector of role strings).
+- `RUser::has_role(role)` checks if the user has a specific role.
 - Failure modes:
   - `401 Unauthorized`: missing token, invalid token, or expired token.
   - `500 Internal Server Error`: token manager missing from `app_data`, or internal mutex poisoned.
@@ -164,7 +275,16 @@ Redis manager:
 
 - `RTokenRedisManager::login(user_id, ttl_seconds)` stores `prefix + token` as the key and `user_id` as the value, with Redis TTL set to `ttl_seconds`.
 - `validate(token)` returns `Ok(None)` when the key is absent (revoked or expired).
+- When RBAC is enabled, `validate(token)` returns `Ok(Some((user_id, roles)))` with both user ID and roles.
 - `logout(token)` deletes the key and is idempotent.
+
+RBAC behavior:
+
+- Tokens can be created with roles via `login_with_roles()`.
+- Roles can be updated on existing tokens via `set_roles()`.
+- Roles can be retrieved via `get_roles()`.
+- `RUser.roles` is always available (empty vector if no roles were assigned).
+- `RUser::has_role()` performs a case-sensitive string comparison.
 
 ## Redis/Valkey usage
 
@@ -237,7 +357,7 @@ REDIS_URL=redis://127.0.0.1/ cargo run --bin r-token-redis --features redis-acti
 - [x] In-memory token management + extractor
 - [x] Token expiration (TTL)
 - [x] Redis/Valkey backend token storage (optional)
-- [ ] Role-based access control (RBAC)
+- [x] Role-based access control (RBAC)
 - [ ] Cookie support
 
 ## License
