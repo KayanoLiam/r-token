@@ -49,6 +49,7 @@
 //! ```
 
 use actix_web::{HttpRequest, HttpResponse, HttpServer, get, post, web};
+use actix_web::cookie::Cookie;
 use r_token::RTokenRedisManager;
 
 /// Extracts the token from `Authorization` header.
@@ -65,22 +66,25 @@ use r_token::RTokenRedisManager;
 /// - `Authorization: <token>`
 /// - `Authorization: Bearer <token>`
 fn extract_token(req: &HttpRequest) -> Result<String, actix_web::Error> {
-    // 這個函式的目的：把 HTTP 請求裡的 Authorization header 解析成 token 字串。
-    // 之後 login/info/logout 都會用到同一套解析規則，集中在這裡避免重複與不一致。
-    //
-    // 支援兩種常見格式：
-    // - Authorization: <token>
-    // - Authorization: Bearer <token>
-    let token = req
+    let header_token = req
         .headers()
-        // 從 header map 取出 Authorization 這個欄位（如果沒有就回 401）。
         .get("Authorization")
-        // HeaderValue 轉成 &str；如果不是合法 UTF-8，就當作沒有 token（回 401）。
         .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| actix_web::error::ErrorUnauthorized("Unauthorized"))?;
+        .map(|token| token.strip_prefix("Bearer ").unwrap_or(token).to_string());
 
-    // 如果有 Bearer 前綴就剝掉，回傳乾淨的 token。
-    Ok(token.strip_prefix("Bearer ").unwrap_or(token).to_string())
+    if let Some(token) = header_token {
+        return Ok(token);
+    }
+
+    if let Some(cookie) = req.cookie(r_token::TOKEN_COOKIE_NAME) {
+        return Ok(cookie.value().to_string());
+    }
+
+    if let Some(cookie) = req.cookie("token") {
+        return Ok(cookie.value().to_string());
+    }
+
+    Err(actix_web::error::ErrorUnauthorized("Unauthorized"))
 }
 
 /// Issues a token and stores it in Redis/Valkey with TTL.
@@ -107,7 +111,9 @@ async fn do_login(
         .await
         .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
 
-    Ok(HttpResponse::Ok().body(token))
+    Ok(HttpResponse::Ok()
+        .cookie(Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone()).path("/").http_only(true).finish())
+        .body(token))
 }
 
 /// A protected endpoint that validates `Authorization` via Redis/Valkey.

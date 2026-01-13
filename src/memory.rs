@@ -145,6 +145,44 @@ impl RTokenManager {
             .remove(token);
         Ok(())
     }
+
+    pub fn validate(&self, token: &str) -> Result<Option<String>, RTokenError> {
+        #[cfg(feature = "rbac")]
+        {
+            Ok(self
+                .validate_with_roles(token)?
+                .map(|(user_id, _roles)| user_id))
+        }
+
+        #[cfg(not(feature = "rbac"))]
+        {
+            let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+            let Some(info) = store.get(token) else { return Ok(None) };
+
+            if info.expire_at < Utc::now().timestamp_millis() as u64 {
+                store.remove(token);
+                return Ok(None);
+            }
+
+            Ok(Some(info.user_id.clone()))
+        }
+    }
+
+    #[cfg(feature = "rbac")]
+    pub fn validate_with_roles(
+        &self,
+        token: &str,
+    ) -> Result<Option<(String, Vec<String>)>, RTokenError> {
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        let Some(info) = store.get(token) else { return Ok(None) };
+
+        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+            store.remove(token);
+            return Ok(None);
+        }
+
+        Ok(Some((info.user_id.clone(), info.roles.clone())))
+    }
 }
 
 /// An authenticated request context extracted from actix-web.
@@ -228,16 +266,8 @@ impl actix_web::FromRequest for RUser {
                 )));
             }
         };
-        // 獲取Token（優先看header中的Authorization）
-        let token = match req
-            .headers()
-            .get("Authorization")
-            .and_then(|h| h.to_str().ok())
-        {
-            Some(token_str) => token_str
-                .strip_prefix("Bearer ")
-                .unwrap_or(token_str)
-                .to_string(),
+        let token = match crate::extract_token_from_request(req) {
+            Some(token) => token,
             None => {
                 return std::future::ready(Err(actix_web::error::ErrorUnauthorized(
                     "Unauthorized",
@@ -245,37 +275,44 @@ impl actix_web::FromRequest for RUser {
             }
         };
 
-        // 驗證token
-        let store = match manager.store.lock() {
-            Ok(s) => s,
-            Err(_) => {
-                return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
-                    "Mutex poisoned",
-                )));
-            }
-        };
-
-        match store.get(&token) {
-            Some(id) => {
-                // 檢查token是否過期
-                if id.expire_at < Utc::now().timestamp_millis() as u64 {
-                    return std::future::ready(Err(actix_web::error::ErrorUnauthorized(
-                        "Token expired",
+        #[cfg(feature = "rbac")]
+        {
+            let user_info = match manager.validate_with_roles(&token) {
+                Ok(user_info) => user_info,
+                Err(_) => {
+                    return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
+                        "Mutex poisoned",
                     )));
                 }
-                std::future::ready(Ok(RUser {
-                    id: id.user_id.clone(),
-                    token: token.clone(),
-                    #[cfg(feature = "rbac")]
-                    roles: id.roles.clone(),
-                }))
-                // return ready(Ok(RUser {
-                //     // id: id.clone(),
-                //     id: id.user_id.clone(),
-                //     token: token.clone(),
-                // }));
+            };
+
+            if let Some((user_id, roles)) = user_info {
+                return std::future::ready(Ok(RUser {
+                    id: user_id,
+                    token,
+                    roles,
+                }));
             }
-            None => std::future::ready(Err(actix_web::error::ErrorUnauthorized("Invalid token"))),
+
+            std::future::ready(Err(actix_web::error::ErrorUnauthorized("Invalid token")))
+        }
+
+        #[cfg(not(feature = "rbac"))]
+        {
+            let user_id = match manager.validate(&token) {
+                Ok(user_id) => user_id,
+                Err(_) => {
+                    return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
+                        "Mutex poisoned",
+                    )));
+                }
+            };
+
+            if let Some(user_id) = user_id {
+                return std::future::ready(Ok(RUser { id: user_id, token }));
+            }
+
+            std::future::ready(Err(actix_web::error::ErrorUnauthorized("Invalid token")))
         }
     }
 }

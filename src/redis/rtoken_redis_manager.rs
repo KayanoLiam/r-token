@@ -18,6 +18,9 @@ use tokio::sync::Mutex;
 #[cfg(feature = "rbac")]
 use crate::models::RTokenInfo;
 
+#[cfg(feature = "actix")]
+use actix_web::web;
+
 /// A token manager backed by Redis/Valkey.
 ///
 /// Tokens are stored as `prefix + token` keys with `user_id` as the value, and the
@@ -52,6 +55,71 @@ pub struct RTokenRedisManager {
     // 说明：这种写法实现最简单，但高并发下会形成串行瓶颈。
     // 如果追求更高吞吐，后续可以换成连接池（每次从池中拿一条连接）。
     connection: Arc<Mutex<redis::aio::ConnectionManager>>,
+}
+
+#[cfg(feature = "actix")]
+#[derive(Debug)]
+pub struct RRedisUser {
+    pub id: String,
+    pub token: String,
+    #[cfg(feature = "rbac")]
+    pub roles: Vec<String>,
+}
+
+#[cfg(feature = "actix")]
+impl actix_web::FromRequest for RRedisUser {
+    type Error = actix_web::Error;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
+
+    fn from_request(
+        req: &actix_web::HttpRequest,
+        _payload: &mut actix_web::dev::Payload,
+    ) -> Self::Future {
+        let manager = match req.app_data::<web::Data<RTokenRedisManager>>() {
+            Some(manager) => manager.clone(),
+            None => {
+                return Box::pin(async {
+                    Err(actix_web::error::ErrorInternalServerError(
+                        "Token manager not found",
+                    ))
+                });
+            }
+        };
+
+        let token = crate::extract_token_from_request(req);
+
+        Box::pin(async move {
+            let token = token.ok_or_else(|| actix_web::error::ErrorUnauthorized("Unauthorized"))?;
+
+            #[cfg(feature = "rbac")]
+            let user_info = manager
+                .validate_with_roles(&token)
+                .await
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
+
+            #[cfg(not(feature = "rbac"))]
+            let user_info = manager
+                .validate(&token)
+                .await
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
+
+            #[cfg(feature = "rbac")]
+            if let Some((user_id, roles)) = user_info {
+                return Ok(Self {
+                    id: user_id,
+                    token,
+                    roles,
+                });
+            }
+
+            #[cfg(not(feature = "rbac"))]
+            if let Some(user_id) = user_info {
+                return Ok(Self { id: user_id, token });
+            }
+
+            Err(actix_web::error::ErrorUnauthorized("Invalid token"))
+        })
+    }
 }
 
 impl RTokenRedisManager {

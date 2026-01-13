@@ -44,9 +44,78 @@ mod models;
 #[cfg(feature = "redis")]
 mod redis;
 
+pub const TOKEN_COOKIE_NAME: &str = "r_token";
+
+#[cfg(feature = "actix")]
+#[derive(Clone, Debug)]
+pub enum TokenSourcePriority {
+    HeaderFirst,
+    CookieFirst,
+}
+
+#[cfg(feature = "actix")]
+#[derive(Clone, Debug)]
+pub struct TokenSourceConfig {
+    pub priority: TokenSourcePriority,
+    pub header_names: Vec<String>,
+    pub cookie_names: Vec<String>,
+}
+
+#[cfg(feature = "actix")]
+impl Default for TokenSourceConfig {
+    fn default() -> Self {
+        Self {
+            priority: TokenSourcePriority::HeaderFirst,
+            header_names: vec!["Authorization".to_string()],
+            cookie_names: vec![TOKEN_COOKIE_NAME.to_string(), "token".to_string()],
+        }
+    }
+}
+
+#[cfg(feature = "actix")]
+pub fn extract_token_from_request(req: &actix_web::HttpRequest) -> Option<String> {
+    use actix_web::web;
+
+    if let Some(cfg) = req.app_data::<web::Data<TokenSourceConfig>>() {
+        extract_token_from_request_with_config(req, cfg.as_ref())
+    } else {
+        let default_cfg = TokenSourceConfig::default();
+        extract_token_from_request_with_config(req, &default_cfg)
+    }
+}
+
+#[cfg(feature = "actix")]
+pub fn extract_token_from_request_with_config(
+    req: &actix_web::HttpRequest,
+    cfg: &TokenSourceConfig,
+) -> Option<String> {
+    let from_headers = || {
+        cfg.header_names.iter().find_map(|name| {
+            req.headers()
+                .get(name)
+                .and_then(|h| h.to_str().ok())
+                .map(|token_str| token_str.strip_prefix("Bearer ").unwrap_or(token_str).to_string())
+        })
+    };
+
+    let from_cookies = || {
+        cfg.cookie_names.iter().find_map(|name| {
+            req.cookie(name)
+                .map(|cookie| cookie.value().to_string())
+        })
+    };
+
+    match cfg.priority {
+        TokenSourcePriority::HeaderFirst => from_headers().or_else(from_cookies),
+        TokenSourcePriority::CookieFirst => from_cookies().or_else(from_headers),
+    }
+}
+
 pub use crate::memory::RTokenManager;
 #[cfg(feature = "actix")]
 pub use crate::memory::RUser;
 pub use crate::models::RTokenError;
 #[cfg(feature = "redis")]
 pub use crate::redis::RTokenRedisManager;
+#[cfg(all(feature = "redis", feature = "actix"))]
+pub use crate::redis::RRedisUser;

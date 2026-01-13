@@ -161,8 +161,8 @@ mod rbac_tests {
             let resp = actix_test::call_service(&app, req).await;
             assert_eq!(resp.status(), 200);
 
-            let body: Vec<String> =
-                serde_json::from_slice(&actix_test::read_body(resp).await.to_vec()).unwrap();
+            let body_bytes = actix_test::read_body(resp).await;
+            let body: Vec<String> = serde_json::from_slice(body_bytes.as_ref()).unwrap();
             assert_eq!(body, vec!["admin", "editor"]);
         }
 
@@ -222,8 +222,8 @@ mod rbac_tests {
             let resp = actix_test::call_service(&app, req).await;
             assert_eq!(resp.status(), 200);
 
-            let body: Vec<String> =
-                serde_json::from_slice(&actix_test::read_body(resp).await.to_vec()).unwrap();
+            let body_bytes = actix_test::read_body(resp).await;
+            let body: Vec<String> = serde_json::from_slice(body_bytes.as_ref()).unwrap();
             assert!(body.is_empty());
         }
 
@@ -400,10 +400,10 @@ mod rbac_tests {
                     panic!("redis-server not ready at {url}");
                 }
 
-                if let Ok(mut connection) = client.get_connection_manager().await {
-                    if connection.ping::<String>().await.as_deref() == Ok("PONG") {
-                        return;
-                    }
+                if let Ok(mut connection) = client.get_connection_manager().await
+                    && connection.ping::<String>().await.as_deref() == Ok("PONG")
+                {
+                    return;
                 }
 
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;

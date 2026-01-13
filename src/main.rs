@@ -41,6 +41,7 @@
 //! ```
 
 use actix_web::{HttpResponse, HttpServer, get, post, web};
+use actix_web::cookie::Cookie;
 use r_token::{RTokenManager, RUser};
 
 /// Issues a token and returns it as the response body.
@@ -60,7 +61,9 @@ async fn do_login(
     // let token = manager.login("123456");
     // let token = manager.login(&body)?;
     let token = manager.login("121381", 3600)?; // 1 hour expiration
-    Ok(HttpResponse::Ok().body(token))
+    Ok(HttpResponse::Ok()
+        .cookie(Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone()).path("/").http_only(true).finish())
+        .body(token))
 }
 
 /// A protected endpoint.

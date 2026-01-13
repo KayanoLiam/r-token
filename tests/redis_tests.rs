@@ -63,10 +63,10 @@ mod redis_tests {
                 panic!("redis-server not ready at {url}");
             }
 
-            if let Ok(mut connection) = client.get_connection_manager().await {
-                if connection.ping::<String>().await.as_deref() == Ok("PONG") {
-                    return;
-                }
+            if let Ok(mut connection) = client.get_connection_manager().await
+                && connection.ping::<String>().await.as_deref() == Ok("PONG")
+            {
+                return;
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -135,5 +135,148 @@ mod redis_tests {
         let user_id = manager.validate(&token).await.expect("validate failed");
 
         assert!(user_id.is_none());
+    }
+
+    #[cfg(feature = "actix")]
+    mod actix_redis_extractor_tests {
+        use super::*;
+        use actix_web::{App, HttpResponse, get, test as actix_test, web};
+        use actix_web::cookie::Cookie;
+        use r_token::RRedisUser;
+
+        #[actix_web::test]
+        async fn redis_extractor_accepts_authorization_header() {
+            #[get("/protected")]
+            async fn protected(user: RRedisUser) -> impl actix_web::Responder {
+                HttpResponse::Ok().body(user.id)
+            }
+
+            let redis_url = test_redis_url().await;
+            let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("actix_header"))
+                .await
+                .expect("redis connect failed");
+
+            let token = manager.login("alice", 60).await.expect("login failed");
+
+            let app = actix_test::init_service(
+                App::new()
+                    .app_data(web::Data::new(manager))
+                    .service(protected),
+            )
+            .await;
+
+            let req = actix_test::TestRequest::get()
+                .uri("/protected")
+                .insert_header(("Authorization", token.as_str()))
+                .to_request();
+
+            let resp = actix_test::call_service(&app, req).await;
+            assert_eq!(resp.status(), 200);
+            let body = actix_test::read_body(resp).await;
+            assert_eq!(body, "alice");
+        }
+
+        #[actix_web::test]
+        async fn redis_extractor_accepts_cookie_token() {
+            #[get("/protected")]
+            async fn protected(user: RRedisUser) -> impl actix_web::Responder {
+                HttpResponse::Ok().body(user.id)
+            }
+
+            let redis_url = test_redis_url().await;
+            let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("actix_cookie"))
+                .await
+                .expect("redis connect failed");
+
+            let token = manager.login("bob", 60).await.expect("login failed");
+
+            let app = actix_test::init_service(
+                App::new()
+                    .app_data(web::Data::new(manager))
+                    .service(protected),
+            )
+            .await;
+
+            let req = actix_test::TestRequest::get()
+                .uri("/protected")
+                .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+                .to_request();
+
+            let resp = actix_test::call_service(&app, req).await;
+            assert_eq!(resp.status(), 200);
+            let body = actix_test::read_body(resp).await;
+            assert_eq!(body, "bob");
+        }
+
+        #[actix_web::test]
+        async fn authorization_header_takes_precedence_over_cookie() {
+            #[get("/protected")]
+            async fn protected(user: RRedisUser) -> impl actix_web::Responder {
+                HttpResponse::Ok().body(user.id)
+            }
+
+            let redis_url = test_redis_url().await;
+            let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("actix_precedence"))
+                .await
+                .expect("redis connect failed");
+
+            let token = manager.login("carol", 60).await.expect("login failed");
+
+            let app = actix_test::init_service(
+                App::new()
+                    .app_data(web::Data::new(manager))
+                    .service(protected),
+            )
+            .await;
+
+            let req = actix_test::TestRequest::get()
+                .uri("/protected")
+                .insert_header(("Authorization", "invalid-token-xyz"))
+                .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+                .to_request();
+
+            let resp = actix_test::call_service(&app, req).await;
+            assert_eq!(resp.status(), 401);
+        }
+
+        #[actix_web::test]
+        async fn token_source_config_cookie_first_can_override_header() {
+            #[get("/protected")]
+            async fn protected(user: RRedisUser) -> impl actix_web::Responder {
+                HttpResponse::Ok().body(user.id)
+            }
+
+            let redis_url = test_redis_url().await;
+            let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("actix_cfg"))
+                .await
+                .expect("redis connect failed");
+
+            let token = manager.login("dave", 60).await.expect("login failed");
+
+            let cfg = r_token::TokenSourceConfig {
+                priority: r_token::TokenSourcePriority::CookieFirst,
+                header_names: vec!["Authorization".to_string()],
+                cookie_names: vec![r_token::TOKEN_COOKIE_NAME.to_string()],
+            };
+
+            let app = actix_test::init_service(
+                App::new()
+                    .app_data(web::Data::new(manager))
+                    .app_data(web::Data::new(cfg))
+                    .service(protected),
+            )
+            .await;
+
+            let req = actix_test::TestRequest::get()
+                .uri("/protected")
+                .insert_header(("Authorization", "invalid-token-xyz"))
+                .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+                .to_request();
+
+            let resp = actix_test::call_service(&app, req).await;
+            assert_eq!(resp.status(), 200);
+            let body = actix_test::read_body(resp).await;
+            assert_eq!(body, "dave");
+        }
     }
 }

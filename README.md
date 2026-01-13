@@ -359,7 +359,10 @@ REDIS_URL=redis://127.0.0.1/ cargo run --bin r-token-redis --features redis-acti
 - [x] Token expiration (TTL)
 - [x] Redis/Valkey backend token storage (optional)
 - [x] Role-based access control (RBAC)
-- [ ] Cookie support
+- [x] Cookie support
+- [x] In-memory token validation API (non-actix)
+- [x] Redis actix-web extractor (parameter-as-authentication)
+- [x] Configurable token sources (header/cookie name, priority)
 
 ## License
 

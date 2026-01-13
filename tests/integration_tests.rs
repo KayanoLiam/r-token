@@ -51,6 +51,26 @@ fn logout_nonexistent_token() {
 }
 
 #[test]
+fn validate_returns_user_id() {
+    let manager = RTokenManager::new();
+    let token = manager.login("validate_user", 3600).unwrap();
+
+    let user_id = manager.validate(&token).unwrap();
+    assert_eq!(user_id.as_deref(), Some("validate_user"));
+}
+
+#[test]
+fn validate_returns_none_for_expired_token() {
+    let manager = RTokenManager::new();
+    let token = manager.login("expired_validate_user", 0).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    let user_id = manager.validate(&token).unwrap();
+    assert!(user_id.is_none());
+}
+
+#[test]
 fn multiple_users() {
     let manager = RTokenManager::new();
 
@@ -128,6 +148,7 @@ fn concurrent_logout() {
 mod actix_integration_tests {
     use super::*;
     use actix_web::{App, HttpResponse, get, post, test as actix_test, web};
+    use actix_web::cookie::Cookie;
     use r_token::{RTokenError, RUser};
 
     #[actix_web::test]
@@ -233,6 +254,99 @@ mod actix_integration_tests {
 
         let body = actix_test::read_body(resp).await;
         assert_eq!(body, "User: bearer_user");
+    }
+
+    #[actix_web::test]
+    async fn protected_route_with_cookie_token() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
+
+        let manager = RTokenManager::new();
+        let token = manager.login("cookie_user", 3600).unwrap();
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body = actix_test::read_body(resp).await;
+        assert_eq!(body, "User: cookie_user");
+    }
+
+    #[actix_web::test]
+    async fn authorization_header_takes_precedence_over_cookie() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
+
+        let manager = RTokenManager::new();
+        let token = manager.login("cookie_user_2", 3600).unwrap();
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .service(protected),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", "invalid-token-xyz"))
+            .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[actix_web::test]
+    async fn token_source_config_cookie_first_can_override_header() {
+        #[get("/protected")]
+        async fn protected(user: RUser) -> impl actix_web::Responder {
+            HttpResponse::Ok().body(format!("User: {}", user.id))
+        }
+
+        let manager = RTokenManager::new();
+        let token = manager.login("cookie_first_user", 3600).unwrap();
+
+        let cfg = r_token::TokenSourceConfig {
+            priority: r_token::TokenSourcePriority::CookieFirst,
+            header_names: vec!["Authorization".to_string()],
+            cookie_names: vec![r_token::TOKEN_COOKIE_NAME.to_string()],
+        };
+
+        let app = actix_test::init_service(
+            App::new()
+                .app_data(web::Data::new(manager))
+                .app_data(web::Data::new(cfg))
+                .service(protected),
+        )
+        .await;
+
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .insert_header(("Authorization", "invalid-token-xyz"))
+            .cookie(Cookie::new(r_token::TOKEN_COOKIE_NAME, token))
+            .to_request();
+
+        let resp = actix_test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body = actix_test::read_body(resp).await;
+        assert_eq!(body, "User: cookie_first_user");
     }
 
     #[actix_web::test]
