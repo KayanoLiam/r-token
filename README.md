@@ -275,7 +275,8 @@ Redis manager:
 
 - `RTokenRedisManager::login(user_id, ttl_seconds)` stores `prefix + token` as the key and `user_id` as the value, with Redis TTL set to `ttl_seconds`.
 - `validate(token)` returns `Ok(None)` when the key is absent (revoked or expired).
-- When RBAC is enabled, `validate(token)` returns `Ok(Some((user_id, roles)))` with both user ID and roles.
+- When RBAC is enabled, `validate(token)` returns `Ok(Some(user_id))`.
+- When RBAC is enabled, `validate_with_roles(token)` returns `Ok(Some((user_id, roles)))`.
 - `logout(token)` deletes the key and is idempotent.
 
 RBAC behavior:
