@@ -15,6 +15,9 @@ use redis::AsyncCommands;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[cfg(feature = "rbac")]
+use crate::models::RTokenInfo;
+
 /// A token manager backed by Redis/Valkey.
 ///
 /// Tokens are stored as `prefix + token` keys with `user_id` as the value, and the
@@ -78,19 +81,27 @@ impl RTokenRedisManager {
         &self,
         user_id: &str,
         ttl_seconds: u64,
-        roles: Vec<String>,
+        roles: impl Into<Vec<String>>,
     ) -> Result<String, redis::RedisError> {
         let token = uuid::Uuid::new_v4().to_string();
         let key = self.key(&token);
 
         let mut connection = self.connection.lock().await;
 
-        // Store both user_id and roles as a JSON string
-        let value = serde_json::json!({
-            "user_id": user_id,
-            "roles": roles,
-        })
-        .to_string();
+        let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
+            .timestamp_millis() as u64;
+        let info = RTokenInfo {
+            user_id: user_id.to_string(),
+            expire_at,
+            roles: roles.into(),
+        };
+        let value = serde_json::to_string(&info).map_err(|e| {
+            redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "serialize token info",
+                e.to_string(),
+            ))
+        })?;
 
         let _: () = connection.set_ex(key, value, ttl_seconds).await?;
         Ok(token)
@@ -98,83 +109,80 @@ impl RTokenRedisManager {
 
     #[cfg(feature = "rbac")]
     pub async fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, redis::RedisError> {
-        let key = self.key(token);
-        let mut connection = self.connection.lock().await;
-
-        let value: Option<String> = connection.get(key).await?;
-        if let Some(value) = value {
-            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
-            let roles = parsed
-                .get("roles")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(Some(roles))
-        } else {
-            Ok(None)
-        }
+        Ok(self
+            .validate_with_roles(token)
+            .await?
+            .map(|(_user_id, roles)| roles))
     }
 
     #[cfg(feature = "rbac")]
     pub async fn set_roles(
         &self,
         token: &str,
-        roles: Vec<String>,
+        roles: impl Into<Vec<String>>,
     ) -> Result<(), redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
 
+        let ttl_seconds: i64 = connection.ttl(&key).await?;
+        if ttl_seconds == -2 {
+            return Ok(());
+        }
+
         let value: Option<String> = connection.get(&key).await?;
-        if let Some(value) = value {
-            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
-            let user_id = parsed
-                .get("user_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
+        let Some(value) = value else { return Ok(()) };
 
-            // Update roles
-            let new_value = serde_json::json!({
-                "user_id": user_id,
-                "roles": roles,
-            })
-            .to_string();
+        let mut info = serde_json::from_str::<RTokenInfo>(&value).unwrap_or(RTokenInfo {
+            user_id: value,
+            expire_at: 0,
+            roles: Vec::new(),
+        });
+        info.roles = roles.into();
 
+        let new_value = serde_json::to_string(&info).map_err(|e| {
+            redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "serialize token info",
+                e.to_string(),
+            ))
+        })?;
+
+        if ttl_seconds > 0 {
+            let _: () = connection
+                .set_ex(key, new_value, ttl_seconds as u64)
+                .await?;
+        } else {
             let _: () = connection.set(key, new_value).await?;
         }
+
         Ok(())
     }
 
     #[cfg(feature = "rbac")]
-    pub async fn validate(&self, token: &str) -> Result<Option<(String, Vec<String>)>, redis::RedisError> {
+    pub async fn validate_with_roles(
+        &self,
+        token: &str,
+    ) -> Result<Option<(String, Vec<String>)>, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
 
         let value: Option<String> = connection.get(key).await?;
-        if let Some(value) = value {
-            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
-            let user_id = parsed
-                .get("user_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let roles = parsed
-                .get("roles")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(Some((user_id, roles)))
-        } else {
-            Ok(None)
-        }
+        let Some(value) = value else { return Ok(None) };
+
+        let info = serde_json::from_str::<RTokenInfo>(&value).unwrap_or(RTokenInfo {
+            user_id: value,
+            expire_at: 0,
+            roles: Vec::new(),
+        });
+        Ok(Some((info.user_id, info.roles)))
+    }
+
+    #[cfg(feature = "rbac")]
+    pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
+        Ok(self
+            .validate_with_roles(token)
+            .await?
+            .map(|(user_id, _roles)| user_id))
     }
 
     /// Connects to Redis/Valkey and creates a manager.

@@ -121,15 +121,29 @@ async fn do_info(
     req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
     let token = extract_token(&req)?;
+    #[cfg(feature = "rbac")]
+    let user_info = manager
+        .validate_with_roles(&token)
+        .await
+        .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
+
+    #[cfg(not(feature = "rbac"))]
     let user_info = manager
         .validate(&token)
         .await
         .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
 
+    #[cfg(feature = "rbac")]
     match user_info {
         Some((user_id, roles)) => {
             Ok(HttpResponse::Ok().body(format!("info: user_id={}, roles={:?}", user_id, roles)))
         }
+        None => Err(actix_web::error::ErrorUnauthorized("Invalid token")),
+    }
+
+    #[cfg(not(feature = "rbac"))]
+    match user_info {
+        Some(user_id) => Ok(HttpResponse::Ok().body(format!("info: {}", user_id))),
         None => Err(actix_web::error::ErrorUnauthorized("Invalid token")),
     }
 }
