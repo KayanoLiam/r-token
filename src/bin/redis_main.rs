@@ -48,8 +48,8 @@
 //! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8081/logout
 //! ```
 
-use actix_web::{HttpRequest, HttpResponse, HttpServer, get, post, web};
 use actix_web::cookie::Cookie;
+use actix_web::{HttpRequest, HttpResponse, HttpServer, get, post, web};
 use r_token::RTokenRedisManager;
 
 /// Extracts the token from `Authorization` header.
@@ -112,7 +112,12 @@ async fn do_login(
         .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
 
     Ok(HttpResponse::Ok()
-        .cookie(Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone()).path("/").http_only(true).finish())
+        .cookie(
+            Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone())
+                .path("/")
+                .http_only(true)
+                .finish(),
+        )
         .body(token))
 }
 

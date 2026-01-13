@@ -140,8 +140,8 @@ mod redis_tests {
     #[cfg(feature = "actix")]
     mod actix_redis_extractor_tests {
         use super::*;
-        use actix_web::{App, HttpResponse, get, test as actix_test, web};
         use actix_web::cookie::Cookie;
+        use actix_web::{App, HttpResponse, get, test as actix_test, web};
         use r_token::RRedisUser;
 
         #[actix_web::test]
@@ -216,9 +216,10 @@ mod redis_tests {
             }
 
             let redis_url = test_redis_url().await;
-            let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("actix_precedence"))
-                .await
-                .expect("redis connect failed");
+            let manager =
+                RTokenRedisManager::connect(&redis_url, unique_prefix("actix_precedence"))
+                    .await
+                    .expect("redis connect failed");
 
             let token = manager.login("carol", 60).await.expect("login failed");
 

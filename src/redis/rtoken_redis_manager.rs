@@ -59,10 +59,46 @@ pub struct RTokenRedisManager {
 
 #[cfg(feature = "actix")]
 #[derive(Debug)]
+/// An authenticated request context extracted from actix-web using Redis/Valkey backend.
+///
+/// If extraction succeeds:
+/// - `id` is the validated user id
+/// - `token` is the raw token string from the request
+/// - when RBAC is enabled, `roles` are also included
+///
+/// The token source is resolved via [`crate::extract_token_from_request`], which supports
+/// configurable header/cookie names and priority.
+///
+/// ## 繁體中文
+///
+/// 由 actix-web 自動抽取的已驗證使用者上下文（Redis/Valkey 版本）。
+///
+/// Extractor 成功時：
+/// - `id` 為驗證後的使用者 id
+/// - `token` 為請求中帶來的 token 原文
+/// - 啟用 RBAC 時也會包含 `roles`
+///
+/// token 來源會透過 [`crate::extract_token_from_request`] 解析，支援可設定的
+/// header/cookie 名稱與優先順序。
 pub struct RRedisUser {
+    /// The validated user id.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 驗證後的使用者 id。
     pub id: String,
+    /// The raw token string from the request.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 來自請求的 token 字串原文。
     pub token: String,
     #[cfg(feature = "rbac")]
+    /// Roles associated with the token (RBAC enabled).
+    ///
+    /// ## 繁體中文
+    ///
+    /// 與 token 綁定的角色列表（啟用 RBAC 時）。
     pub roles: Vec<String>,
 }
 

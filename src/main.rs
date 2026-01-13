@@ -40,8 +40,8 @@
 //! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8080/logout
 //! ```
 
-use actix_web::{HttpResponse, HttpServer, get, post, web};
 use actix_web::cookie::Cookie;
+use actix_web::{HttpResponse, HttpServer, get, post, web};
 use r_token::{RTokenManager, RUser};
 
 /// Issues a token and returns it as the response body.
@@ -62,7 +62,12 @@ async fn do_login(
     // let token = manager.login(&body)?;
     let token = manager.login("121381", 3600)?; // 1 hour expiration
     Ok(HttpResponse::Ok()
-        .cookie(Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone()).path("/").http_only(true).finish())
+        .cookie(
+            Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone())
+                .path("/")
+                .http_only(true)
+                .finish(),
+        )
         .body(token))
 }
 

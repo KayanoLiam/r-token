@@ -147,8 +147,8 @@ fn concurrent_logout() {
 #[cfg(feature = "actix")]
 mod actix_integration_tests {
     use super::*;
-    use actix_web::{App, HttpResponse, get, post, test as actix_test, web};
     use actix_web::cookie::Cookie;
+    use actix_web::{App, HttpResponse, get, post, test as actix_test, web};
     use r_token::{RTokenError, RUser};
 
     #[actix_web::test]

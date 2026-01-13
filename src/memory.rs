@@ -146,6 +146,21 @@ impl RTokenManager {
         Ok(())
     }
 
+    /// Validates a token and returns the associated user id if present.
+    ///
+    /// Behavior:
+    /// - Returns `Ok(Some(user_id))` when the token exists and is not expired.
+    /// - Returns `Ok(None)` when the token does not exist or is expired.
+    /// - Expired tokens are removed from the in-memory store during validation.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 驗證 token，若有效則回傳對應的使用者 id。
+    ///
+    /// 行為：
+    /// - token 存在且未過期：回傳 `Ok(Some(user_id))`
+    /// - token 不存在或已過期：回傳 `Ok(None)`
+    /// - 若 token 已過期，會在驗證時從記憶體儲存表中移除
     pub fn validate(&self, token: &str) -> Result<Option<String>, RTokenError> {
         #[cfg(feature = "rbac")]
         {
@@ -157,7 +172,9 @@ impl RTokenManager {
         #[cfg(not(feature = "rbac"))]
         {
             let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
-            let Some(info) = store.get(token) else { return Ok(None) };
+            let Some(info) = store.get(token) else {
+                return Ok(None);
+            };
 
             if info.expire_at < Utc::now().timestamp_millis() as u64 {
                 store.remove(token);
@@ -169,12 +186,23 @@ impl RTokenManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Validates a token and returns both user id and roles (RBAC enabled).
+    ///
+    /// This has the same expiration behavior as [`RTokenManager::validate`].
+    ///
+    /// ## 繁體中文
+    ///
+    /// 驗證 token，並在 RBAC 啟用時同時回傳使用者 id 與角色列表。
+    ///
+    /// 到期行為與 [`RTokenManager::validate`] 相同。
     pub fn validate_with_roles(
         &self,
         token: &str,
     ) -> Result<Option<(String, Vec<String>)>, RTokenError> {
         let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
-        let Some(info) = store.get(token) else { return Ok(None) };
+        let Some(info) = store.get(token) else {
+            return Ok(None);
+        };
 
         if info.expire_at < Utc::now().timestamp_millis() as u64 {
             store.remove(token);
