@@ -39,7 +39,7 @@ Add r-token to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-r-token = "0.1.5"
+r-token = "0.1.8"
 ```
 
 ## Feature flags
