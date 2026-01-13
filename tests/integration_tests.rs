@@ -127,7 +127,7 @@ fn concurrent_logout() {
 #[cfg(feature = "actix")]
 mod actix_integration_tests {
     use super::*;
-    use actix_web::{get, post, test as actix_test, web, App, HttpResponse};
+    use actix_web::{App, HttpResponse, get, post, test as actix_test, web};
     use r_token::{RTokenError, RUser};
 
     #[actix_web::test]
@@ -145,7 +145,9 @@ mod actix_integration_tests {
         )
         .await;
 
-        let req = actix_test::TestRequest::get().uri("/protected").to_request();
+        let req = actix_test::TestRequest::get()
+            .uri("/protected")
+            .to_request();
 
         let resp = actix_test::call_service(&app, req).await;
         assert_eq!(resp.status(), 401);

@@ -1,5 +1,5 @@
-use crate::models::RTokenInfo;
 use crate::RTokenError;
+use crate::models::RTokenInfo;
 use chrono::Utc;
 use std::{
     collections::HashMap,
@@ -63,6 +63,7 @@ impl RTokenManager {
     /// `expire_time` 會被視為 TTL（秒）。當儲存的到期時間早於目前時間時，token 會被視為無效。
     ///
     /// 若內部 mutex 發生 poisoned，會回傳 [`RTokenError::MutexPoisoned`]。
+    // pub fn login(&self, id: &str, expire_time: u64,role:impl Into<Vec<String>>) -> Result<String, RTokenError> {
     pub fn login(&self, id: &str, expire_time: u64) -> Result<String, RTokenError> {
         let token = uuid::Uuid::new_v4().to_string();
         // Acquire the write lock and insert the token-user mapping into the store
@@ -76,12 +77,53 @@ impl RTokenManager {
         let info = RTokenInfo {
             user_id: id.to_string(),
             expire_at: expire_time,
+            roles: Vec::new(),
         };
         self.store
             .lock()
             .map_err(|_| RTokenError::MutexPoisoned)?
             .insert(token.clone(), info);
         Ok(token)
+    }
+
+    #[cfg(feature = "rbac")]
+    pub fn login_with_roles(
+        &self,
+        id: &str,
+        expire_time: u64,
+        role: impl Into<Vec<String>>,
+    ) -> Result<String, RTokenError> {
+        let token = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let ttl = chrono::Duration::seconds(expire_time as i64);
+        let deadline = now + ttl;
+        let expire_time = deadline.timestamp_millis() as u64;
+        let info = RTokenInfo {
+            user_id: id.to_string(),
+            expire_at: expire_time,
+            roles: role.into(),
+        };
+        self.store
+            .lock()
+            .map_err(|_| RTokenError::MutexPoisoned)?
+            .insert(token.clone(), info);
+        Ok(token)
+    }
+
+    // pub fn set_role(&self, token: &str, role: impl Into<Vec<String>>) -> Result<(), RTokenError> {
+    #[cfg(feature = "rbac")]
+    pub fn set_roles(&self, token: &str, roles: impl Into<Vec<String>>) -> Result<(), RTokenError> {
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        if let Some(info) = store.get_mut(token) {
+            info.roles = roles.into();
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "rbac")]
+    pub fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, RTokenError> {
+        let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        Ok(store.get(token).map(|info| info.roles.clone()))
     }
 
     /// Revokes a token by removing it from the in-memory store.
@@ -142,6 +184,15 @@ pub struct RUser {
     ///
     /// 來自請求的 token 字串原文。
     pub token: String,
+    #[cfg(feature = "rbac")]
+    pub roles: Vec<String>,
+}
+
+#[cfg(feature = "rbac")]
+impl RUser {
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
 }
 
 /// Extracts [`RUser`] from an actix-web request.
@@ -215,6 +266,8 @@ impl actix_web::FromRequest for RUser {
                 std::future::ready(Ok(RUser {
                     id: id.user_id.clone(),
                     token: token.clone(),
+                    #[cfg(feature = "rbac")]
+                    roles: id.roles.clone(),
                 }))
                 // return ready(Ok(RUser {
                 //     // id: id.clone(),

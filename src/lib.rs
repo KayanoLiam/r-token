@@ -39,14 +39,14 @@
 //! 3. 客戶端透過 `Authorization` header 送回 token（支援 `Bearer ` 前綴或不帶前綴）。
 //! 4. 任何 handler 只要宣告 [`RUser`] 參數即視為受保護端點；Extractor 成功才會進入 handler。
 
-mod models;
 mod memory;
+mod models;
 #[cfg(feature = "redis")]
 mod redis;
 
-pub use crate::models::RTokenError;
 pub use crate::memory::RTokenManager;
 #[cfg(feature = "actix")]
 pub use crate::memory::RUser;
+pub use crate::models::RTokenError;
 #[cfg(feature = "redis")]
 pub use crate::redis::RTokenRedisManager;

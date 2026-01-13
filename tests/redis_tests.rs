@@ -20,15 +20,9 @@ mod redis_tests {
             .await
             .expect("redis connect failed");
 
-        let token = manager
-            .login("alice", 60)
-            .await
-            .expect("login failed");
+        let token = manager.login("alice", 60).await.expect("login failed");
 
-        let user_id = manager
-            .validate(&token)
-            .await
-            .expect("validate failed");
+        let user_id = manager.validate(&token).await.expect("validate failed");
 
         assert_eq!(user_id.as_deref(), Some("alice"));
     }
@@ -39,17 +33,11 @@ mod redis_tests {
             .await
             .expect("redis connect failed");
 
-        let token = manager
-            .login("bob", 60)
-            .await
-            .expect("login failed");
+        let token = manager.login("bob", 60).await.expect("login failed");
 
         manager.logout(&token).await.expect("logout failed");
 
-        let user_id = manager
-            .validate(&token)
-            .await
-            .expect("validate failed");
+        let user_id = manager.validate(&token).await.expect("validate failed");
 
         assert!(user_id.is_none());
     }
@@ -60,19 +48,12 @@ mod redis_tests {
             .await
             .expect("redis connect failed");
 
-        let token = manager
-            .login("carol", 1)
-            .await
-            .expect("login failed");
+        let token = manager.login("carol", 1).await.expect("login failed");
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        let user_id = manager
-            .validate(&token)
-            .await
-            .expect("validate failed");
+        let user_id = manager.validate(&token).await.expect("validate failed");
 
         assert!(user_id.is_none());
     }
 }
-

@@ -7,6 +7,7 @@
 /// 儲存在記憶體中的 token 中繼資料。
 ///
 /// 這是與 token 字串綁定的內部紀錄。
+#[cfg_attr(feature = "rbac", derive(serde::Serialize, serde::Deserialize))]
 pub struct RTokenInfo {
     /// User id associated with the token.
     ///
@@ -22,4 +23,7 @@ pub struct RTokenInfo {
     ///
     /// 到期時間（Unix epoch 毫秒）。
     pub expire_at: u64,
+    #[allow(unused)]
+    // Roles associated with the token.
+    pub roles: Vec<String>,
 }

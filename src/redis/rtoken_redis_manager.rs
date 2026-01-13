@@ -73,6 +73,110 @@ impl RTokenRedisManager {
         }
     }
 
+    #[cfg(feature = "rbac")]
+    pub async fn login_with_roles(
+        &self,
+        user_id: &str,
+        ttl_seconds: u64,
+        roles: Vec<String>,
+    ) -> Result<String, redis::RedisError> {
+        let token = uuid::Uuid::new_v4().to_string();
+        let key = self.key(&token);
+
+        let mut connection = self.connection.lock().await;
+
+        // Store both user_id and roles as a JSON string
+        let value = serde_json::json!({
+            "user_id": user_id,
+            "roles": roles,
+        })
+        .to_string();
+
+        let _: () = connection.set_ex(key, value, ttl_seconds).await?;
+        Ok(token)
+    }
+
+    #[cfg(feature = "rbac")]
+    pub async fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, redis::RedisError> {
+        let key = self.key(token);
+        let mut connection = self.connection.lock().await;
+
+        let value: Option<String> = connection.get(key).await?;
+        if let Some(value) = value {
+            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
+            let roles = parsed
+                .get("roles")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(Some(roles))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(feature = "rbac")]
+    pub async fn set_roles(
+        &self,
+        token: &str,
+        roles: Vec<String>,
+    ) -> Result<(), redis::RedisError> {
+        let key = self.key(token);
+        let mut connection = self.connection.lock().await;
+
+        let value: Option<String> = connection.get(&key).await?;
+        if let Some(value) = value {
+            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
+            let user_id = parsed
+                .get("user_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            // Update roles
+            let new_value = serde_json::json!({
+                "user_id": user_id,
+                "roles": roles,
+            })
+            .to_string();
+
+            let _: () = connection.set(key, new_value).await?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "rbac")]
+    pub async fn validate(&self, token: &str) -> Result<Option<(String, Vec<String>)>, redis::RedisError> {
+        let key = self.key(token);
+        let mut connection = self.connection.lock().await;
+
+        let value: Option<String> = connection.get(key).await?;
+        if let Some(value) = value {
+            let parsed: serde_json::Value = serde_json::from_str(&value).unwrap_or_default();
+            let user_id = parsed
+                .get("user_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let roles = parsed
+                .get("roles")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(Some((user_id, roles)))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Connects to Redis/Valkey and creates a manager.
     ///
     /// ## 繁體中文
@@ -166,6 +270,7 @@ impl RTokenRedisManager {
     /// 驗證 token，若存在則回傳對應的 `user_id`。
     ///
     /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
+    #[cfg(not(feature = "rbac"))]
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;

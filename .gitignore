@@ -4,3 +4,9 @@
 *.iml
 *.swp
 IFLOW.md
+dev_docs/
+.vscode/
+logs/
+*.log
+.env
+AGENTS.md

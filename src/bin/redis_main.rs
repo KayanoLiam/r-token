@@ -48,7 +48,7 @@
 //! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8081/logout
 //! ```
 
-use actix_web::{HttpRequest, HttpResponse, HttpServer, post, get, web};
+use actix_web::{HttpRequest, HttpResponse, HttpServer, get, post, web};
 use r_token::RTokenRedisManager;
 
 /// Extracts the token from `Authorization` header.
@@ -121,13 +121,15 @@ async fn do_info(
     req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
     let token = extract_token(&req)?;
-    let user_id = manager
+    let user_info = manager
         .validate(&token)
         .await
         .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
 
-    match user_id {
-        Some(id) => Ok(HttpResponse::Ok().body(format!("info: {}", id))),
+    match user_info {
+        Some((user_id, roles)) => {
+            Ok(HttpResponse::Ok().body(format!("info: user_id={}, roles={:?}", user_id, roles)))
+        }
         None => Err(actix_web::error::ErrorUnauthorized("Invalid token")),
     }
 }
@@ -159,8 +161,7 @@ async fn do_logout(
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // 讀取 Redis/Valkey 連線字串：允許透過環境變數覆蓋，否則使用本機預設。
-    let redis_url =
-        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
     // 讀取 Redis key 前綴：用來隔離不同應用/環境的 token key（避免互相覆蓋）。
     let prefix = std::env::var("R_TOKEN_PREFIX").unwrap_or_else(|_| "r_token:token:".to_string());
 
