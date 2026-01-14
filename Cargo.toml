@@ -1,6 +1,6 @@
 [package]
 name = "r-token"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Kayano <Kayano04@outlook.jp>"]
 description = "A simple and efficient token generation library for Rust, ideal for API authentication and session management."
 license = "MIT"

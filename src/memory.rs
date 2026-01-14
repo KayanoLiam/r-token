@@ -146,11 +146,34 @@ impl RTokenManager {
         Ok(())
     }
 
+    /// Returns the stored expiration timestamp for a token (milliseconds since Unix epoch).
+    ///
+    /// Returns `Ok(None)` if the token does not exist. This method does not validate
+    /// whether the token has already expired.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 回傳 token 的到期時間戳（Unix epoch 毫秒）。
+    ///
+    /// 若 token 不存在，回傳 `Ok(None)`。本方法不會檢查 token 是否已過期。
     pub fn expires_at(&self, token: &str) -> Result<Option<u64>, RTokenError> {
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
         Ok(store.get(token).map(|info| info.expire_at))
     }
 
+    /// Returns the remaining TTL in seconds for a token.
+    ///
+    /// Returns:
+    /// - `Ok(None)` when the token does not exist
+    /// - `Ok(Some(0))` when the token is already expired (it is not removed here)
+    ///
+    /// ## 繁體中文
+    ///
+    /// 回傳 token 剩餘 TTL（秒）。
+    ///
+    /// 回傳：
+    /// - token 不存在：`Ok(None)`
+    /// - token 已過期：`Ok(Some(0))`（本方法不會在此移除它）
     pub fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, RTokenError> {
         let now_ms = Utc::now().timestamp_millis() as u64;
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
@@ -167,6 +190,19 @@ impl RTokenManager {
         Ok(Some(remaining_seconds))
     }
 
+    /// Extends a token's lifetime to `now + ttl_seconds`.
+    ///
+    /// Returns:
+    /// - `Ok(true)` if the token exists and is not expired
+    /// - `Ok(false)` if the token does not exist or is expired (expired tokens are removed)
+    ///
+    /// ## 繁體中文
+    ///
+    /// 將 token 續期為 `now + ttl_seconds`。
+    ///
+    /// 回傳：
+    /// - token 存在且未過期：`Ok(true)`
+    /// - token 不存在或已過期：`Ok(false)`（若已過期會順便移除）
     pub fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, RTokenError> {
         let now = Utc::now();
         let ttl = chrono::Duration::seconds(ttl_seconds as i64);
@@ -186,6 +222,20 @@ impl RTokenManager {
         Ok(true)
     }
 
+    /// Issues a new token for the same user (and roles) and revokes the old token.
+    ///
+    /// The new token will have a lifetime of `ttl_seconds` from now.
+    ///
+    /// Returns `Ok(None)` if the old token does not exist or is expired (expired tokens
+    /// are removed).
+    ///
+    /// ## 繁體中文
+    ///
+    /// 為同一位使用者（以及角色）換發新 token，並註銷舊 token。
+    ///
+    /// 新 token 的 TTL 會以現在起算 `ttl_seconds`。
+    ///
+    /// 若舊 token 不存在或已過期，回傳 `Ok(None)`（若已過期會順便移除）。
     pub fn rotate(&self, token: &str, ttl_seconds: u64) -> Result<Option<String>, RTokenError> {
         let now = Utc::now();
         let ttl = chrono::Duration::seconds(ttl_seconds as i64);
@@ -213,6 +263,11 @@ impl RTokenManager {
         Ok(Some(new_token))
     }
 
+    /// Removes expired tokens from the in-memory store and returns how many were removed.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 從記憶體儲存表中移除已過期的 token，並回傳移除數量。
     pub fn prune_expired(&self) -> Result<usize, RTokenError> {
         let now = Utc::now().timestamp_millis() as u64;
         let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;

@@ -181,6 +181,17 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Issues a new token with associated roles and stores it in Redis with TTL.
+    ///
+    /// The token is generated as a UUID v4 string. The value is stored as a JSON-encoded
+    /// [`RTokenInfo`] containing `user_id`, `roles`, and `expire_at`.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 簽發一個帶角色的 token，並以 TTL 方式寫入 Redis。
+    ///
+    /// token 以 UUID v4 字串產生。value 會以 JSON 編碼的 [`RTokenInfo`] 儲存，
+    /// 內容包含 `user_id`、`roles` 與 `expire_at`。
     pub async fn login_with_roles(
         &self,
         user_id: &str,
@@ -212,6 +223,15 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Returns the roles associated with a token.
+    ///
+    /// Returns `Ok(None)` if the token does not exist or has expired.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 取得 token 綁定的角色列表。
+    ///
+    /// 若 token 不存在或已過期，回傳 `Ok(None)`。
     pub async fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, redis::RedisError> {
         Ok(self
             .validate_with_roles(token)
@@ -220,6 +240,15 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Updates roles for an existing token while preserving its current TTL.
+    ///
+    /// This operation is idempotent: if the token does not exist, it is treated as success.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 更新既有 token 的角色列表，並保留目前的 TTL。
+    ///
+    /// 此操作具冪等性：token 不存在也視為成功。
     pub async fn set_roles(
         &self,
         token: &str,
@@ -263,6 +292,15 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Validates a token and returns both user id and roles (RBAC enabled).
+    ///
+    /// Returns `Ok(None)` when the token does not exist or has expired.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 驗證 token，並在 RBAC 啟用時同時回傳使用者 id 與角色列表。
+    ///
+    /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
     pub async fn validate_with_roles(
         &self,
         token: &str,
@@ -282,6 +320,15 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// Validates a token and returns the associated user id (RBAC enabled).
+    ///
+    /// Returns `Ok(None)` when the token does not exist or has expired.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 驗證 token，並在 RBAC 啟用時回傳使用者 id。
+    ///
+    /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         Ok(self
             .validate_with_roles(token)
@@ -311,6 +358,21 @@ impl RTokenRedisManager {
         Ok(Self::new(prefix, connection))
     }
 
+    /// Returns the remaining TTL in seconds for a token key.
+    ///
+    /// This method follows Redis TTL semantics:
+    /// - `Ok(None)` when the key does not exist
+    /// - `Ok(Some(-1))` when the key exists but has no expiration
+    /// - `Ok(Some(n))` (n >= 0) for the remaining TTL in seconds
+    ///
+    /// ## 繁體中文
+    ///
+    /// 回傳 token key 的剩餘 TTL（秒）。
+    ///
+    /// 本方法遵循 Redis TTL 的語意：
+    /// - key 不存在：`Ok(None)`
+    /// - key 存在但沒有過期時間：`Ok(Some(-1))`
+    /// - 剩餘 TTL（秒）：`Ok(Some(n))`（n >= 0）
     pub async fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
@@ -321,6 +383,19 @@ impl RTokenRedisManager {
         Ok(Some(ttl))
     }
 
+    /// Updates the token key expiration to `ttl_seconds` from now.
+    ///
+    /// Returns:
+    /// - `Ok(true)` if the key exists and the expiration was updated
+    /// - `Ok(false)` if the key does not exist
+    ///
+    /// ## 繁體中文
+    ///
+    /// 將 token key 的過期時間更新為「從現在起算 `ttl_seconds`」。
+    ///
+    /// 回傳：
+    /// - key 存在且更新成功：`Ok(true)`
+    /// - key 不存在：`Ok(false)`
     pub async fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
@@ -329,6 +404,23 @@ impl RTokenRedisManager {
         Ok(updated)
     }
 
+    /// Issues a new token and deletes the old token key.
+    ///
+    /// The new token will be stored with `ttl_seconds`. If the old token does not exist,
+    /// returns `Ok(None)`.
+    ///
+    /// When RBAC is enabled and the stored value is a JSON-encoded [`RTokenInfo`], the
+    /// `expire_at` field is updated to match the new TTL. For legacy/plain values, the
+    /// raw value is copied as-is.
+    ///
+    /// ## 繁體中文
+    ///
+    /// 換發新 token，並刪除舊 token key。
+    ///
+    /// 新 token 會以 `ttl_seconds` 寫入 Redis。若舊 token 不存在，回傳 `Ok(None)`。
+    ///
+    /// 啟用 RBAC 且 value 為 JSON 編碼的 [`RTokenInfo`] 時，會同步更新 `expire_at`；
+    /// 若為舊格式/純字串 value，則會原樣複製。
     pub async fn rotate(
         &self,
         token: &str,
