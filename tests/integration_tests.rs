@@ -523,6 +523,47 @@ fn manager_clone_shares_state() {
 }
 
 #[test]
+fn prune_expired_removes_expired_tokens() {
+    let manager = RTokenManager::new();
+    let expired_token = manager.login("expired", 0).unwrap();
+    let valid_token = manager.login("valid", 3600).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    let removed = manager.prune_expired().unwrap();
+    assert!(removed >= 1);
+
+    assert!(manager.validate(&expired_token).unwrap().is_none());
+    assert_eq!(
+        manager.validate(&valid_token).unwrap().as_deref(),
+        Some("valid")
+    );
+}
+
+#[test]
+fn memory_ttl_and_renew_and_rotate_work() {
+    let manager = RTokenManager::new();
+    let token = manager.login("alice", 1).unwrap();
+    let user_id = manager.validate(&token).unwrap();
+    assert_eq!(user_id.as_deref(), Some("alice"));
+
+    let ttl = manager.ttl_seconds(&token).unwrap().unwrap();
+    assert!(ttl >= 0);
+
+    let renewed = manager.renew(&token, 60).unwrap();
+    assert!(renewed);
+    let ttl_after = manager.ttl_seconds(&token).unwrap().unwrap();
+    assert!(ttl_after >= 1);
+
+    let new_token = manager.rotate(&token, 60).unwrap().unwrap();
+    assert!(manager.validate(&token).unwrap().is_none());
+    assert_eq!(
+        manager.validate(&new_token).unwrap().as_deref(),
+        Some("alice")
+    );
+}
+
+#[test]
 fn default_implementation() {
     let manager: RTokenManager = Default::default();
     let result = manager.login("default_user", 3600);

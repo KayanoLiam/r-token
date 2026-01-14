@@ -146,6 +146,82 @@ impl RTokenManager {
         Ok(())
     }
 
+    pub fn expires_at(&self, token: &str) -> Result<Option<u64>, RTokenError> {
+        let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        Ok(store.get(token).map(|info| info.expire_at))
+    }
+
+    pub fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, RTokenError> {
+        let now_ms = Utc::now().timestamp_millis() as u64;
+        let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        let Some(expire_at) = store.get(token).map(|info| info.expire_at) else {
+            return Ok(None);
+        };
+
+        if expire_at <= now_ms {
+            return Ok(Some(0));
+        }
+
+        let remaining_ms = expire_at - now_ms;
+        let remaining_seconds = remaining_ms.div_ceil(1000) as i64;
+        Ok(Some(remaining_seconds))
+    }
+
+    pub fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, RTokenError> {
+        let now = Utc::now();
+        let ttl = chrono::Duration::seconds(ttl_seconds as i64);
+        let expire_at = (now + ttl).timestamp_millis() as u64;
+
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        let Some(info) = store.get_mut(token) else {
+            return Ok(false);
+        };
+
+        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+            store.remove(token);
+            return Ok(false);
+        }
+
+        info.expire_at = expire_at;
+        Ok(true)
+    }
+
+    pub fn rotate(&self, token: &str, ttl_seconds: u64) -> Result<Option<String>, RTokenError> {
+        let now = Utc::now();
+        let ttl = chrono::Duration::seconds(ttl_seconds as i64);
+        let expire_at = (now + ttl).timestamp_millis() as u64;
+
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        let Some(info) = store.get(token).cloned() else {
+            return Ok(None);
+        };
+
+        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+            store.remove(token);
+            return Ok(None);
+        }
+
+        let new_token = uuid::Uuid::new_v4().to_string();
+        let new_info = RTokenInfo {
+            user_id: info.user_id,
+            expire_at,
+            roles: info.roles,
+        };
+
+        store.remove(token);
+        store.insert(new_token.clone(), new_info);
+        Ok(Some(new_token))
+    }
+
+    pub fn prune_expired(&self) -> Result<usize, RTokenError> {
+        let now = Utc::now().timestamp_millis() as u64;
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+
+        let original_len = store.len();
+        store.retain(|_token, info| info.expire_at >= now);
+        Ok(original_len - store.len())
+    }
+
     /// Validates a token and returns the associated user id if present.
     ///
     /// Behavior:

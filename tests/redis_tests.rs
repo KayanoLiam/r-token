@@ -137,6 +137,38 @@ mod redis_tests {
         assert!(user_id.is_none());
     }
 
+    #[tokio::test]
+    async fn redis_ttl_and_renew_and_rotate_work() {
+        let redis_url = test_redis_url().await;
+        let manager = RTokenRedisManager::connect(&redis_url, unique_prefix("renew_rotate"))
+            .await
+            .expect("redis connect failed");
+
+        let token = manager.login("alice", 60).await.expect("login failed");
+
+        let ttl = manager
+            .ttl_seconds(&token)
+            .await
+            .expect("ttl_seconds failed")
+            .expect("missing token ttl");
+        assert!(ttl > 0 || ttl == -1);
+
+        let renewed = manager.renew(&token, 120).await.expect("renew failed");
+        assert!(renewed);
+
+        let new_token = manager
+            .rotate(&token, 120)
+            .await
+            .expect("rotate failed")
+            .expect("missing token on rotate");
+
+        let user_id = manager.validate(&token).await.expect("validate failed");
+        assert!(user_id.is_none());
+
+        let user_id = manager.validate(&new_token).await.expect("validate failed");
+        assert_eq!(user_id.as_deref(), Some("alice"));
+    }
+
     #[cfg(feature = "actix")]
     mod actix_redis_extractor_tests {
         use super::*;

@@ -29,9 +29,7 @@ For `actix-web`, r-token follows a “parameter-as-authentication” style: add 
 
 This project is in active development. Review the source code and tests before adopting it in security-sensitive environments.
 
-This project has not yet released version 1.0.0 and is not recommended for use in any production-level projects. The current state should be considered experimental and potentially unstable.
-
-Please note that this project has not been officially released. Both the documentation on docs.rs and this README file may not always reflect the latest changes in the source code. Always refer to the actual source code for the most accurate information. This documentation inconsistency will be resolved upon official release.
+We have released a stable version, but the API is not yet frozen. We will maintain backward compatibility and will not introduce breaking changes.
 
 ## Installation
 
@@ -39,7 +37,7 @@ Add r-token to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-r-token = "0.1.8"
+r-token = "1.0.0"
 ```
 
 ## Feature flags
@@ -55,22 +53,22 @@ Examples:
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.5", default-features = false }
+r-token = { version = "1.0.0", default-features = false }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.5", features = ["redis-actix"] }
+r-token = { version = "1.0.0", features = ["redis-actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.5", features = ["rbac"] }
+r-token = { version = "1.0.0", features = ["rbac"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "0.1.5", features = ["redis-actix", "rbac"] }
+r-token = { version = "1.0.0", features = ["redis-actix", "rbac"] }
 ```
 
 ## Authorization header
@@ -237,7 +235,7 @@ async fn main() -> Result<(), redis::RedisError> {
     let token = manager.login_with_roles("alice", 3600, roles).await?;
 
     // Validate and get user info with roles
-    let user_info = manager.validate(&token).await?;
+    let user_info = manager.validate_with_roles(&token).await?;
     if let Some((user_id, retrieved_roles)) = user_info {
         println!("User: {}, Roles: {:?}", user_id, retrieved_roles);
     }
@@ -259,7 +257,12 @@ async fn main() -> Result<(), redis::RedisError> {
 In-memory manager:
 
 - `RTokenManager::login(user_id, ttl_seconds)` returns a UUID v4 token string.
+- `RTokenManager::renew(token, ttl_seconds)` extends an existing token lifetime.
+- `RTokenManager::rotate(token, ttl_seconds)` issues a new token and revokes the old one.
+- `RTokenManager::ttl_seconds(token)` returns remaining TTL.
 - Expiration is tracked by storing an absolute expiration timestamp (milliseconds since Unix epoch).
+- Expired tokens are removed when you call `validate()` (and will otherwise remain in memory).
+- You can proactively remove expired tokens via `RTokenManager::prune_expired()`.
 - `RTokenManager::logout(token)` is idempotent: revoking a non-existent token is treated as success.
 
 Actix extractor:
@@ -274,8 +277,11 @@ Actix extractor:
 Redis manager:
 
 - `RTokenRedisManager::login(user_id, ttl_seconds)` stores `prefix + token` as the key and `user_id` as the value, with Redis TTL set to `ttl_seconds`.
+- `RTokenRedisManager::renew(token, ttl_seconds)` updates the Redis TTL for the token key.
+- `RTokenRedisManager::rotate(token, ttl_seconds)` issues a new token and deletes the old key.
+- `RTokenRedisManager::ttl_seconds(token)` returns Redis TTL semantics for the token key.
 - `validate(token)` returns `Ok(None)` when the key is absent (revoked or expired).
-- When RBAC is enabled, `validate(token)` returns `Ok(Some(user_id))`.
+- When RBAC is enabled, `validate(token)` returns `Ok(Some(user_id))` (roles require `validate_with_roles(token)`).
 - When RBAC is enabled, `validate_with_roles(token)` returns `Ok(Some((user_id, roles)))`.
 - `logout(token)` deletes the key and is idempotent.
 
@@ -284,7 +290,7 @@ RBAC behavior:
 - Tokens can be created with roles via `login_with_roles()`.
 - Roles can be updated on existing tokens via `set_roles()`.
 - Roles can be retrieved via `get_roles()`.
-- `RUser.roles` is always available (empty vector if no roles were assigned).
+- When RBAC is enabled, `RUser.roles` is available (empty vector if no roles were assigned).
 - `RUser::has_role()` performs a case-sensitive string comparison.
 
 ## Redis/Valkey usage

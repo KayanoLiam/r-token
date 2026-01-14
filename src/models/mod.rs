@@ -13,4 +13,4 @@ mod rtoken_error;
 mod rtoken_info;
 
 pub use rtoken_error::RTokenError;
-pub use rtoken_info::RTokenInfo;
+pub(crate) use rtoken_info::RTokenInfo;

@@ -311,6 +311,65 @@ impl RTokenRedisManager {
         Ok(Self::new(prefix, connection))
     }
 
+    pub async fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, redis::RedisError> {
+        let key = self.key(token);
+        let mut connection = self.connection.lock().await;
+        let ttl: i64 = connection.ttl(key).await?;
+        if ttl == -2 {
+            return Ok(None);
+        }
+        Ok(Some(ttl))
+    }
+
+    pub async fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, redis::RedisError> {
+        let key = self.key(token);
+        let mut connection = self.connection.lock().await;
+        let seconds = i64::try_from(ttl_seconds).unwrap_or(i64::MAX);
+        let updated: bool = connection.expire(key, seconds).await?;
+        Ok(updated)
+    }
+
+    pub async fn rotate(
+        &self,
+        token: &str,
+        ttl_seconds: u64,
+    ) -> Result<Option<String>, redis::RedisError> {
+        let old_key = self.key(token);
+        let mut connection = self.connection.lock().await;
+
+        let value: Option<String> = connection.get(&old_key).await?;
+        let Some(value) = value else {
+            return Ok(None);
+        };
+
+        let new_token = uuid::Uuid::new_v4().to_string();
+        let new_key = self.key(&new_token);
+
+        #[cfg(feature = "rbac")]
+        let value = {
+            let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
+                .timestamp_millis() as u64;
+            match serde_json::from_str::<RTokenInfo>(&value) {
+                Ok(mut info) => {
+                    info.expire_at = expire_at;
+                    serde_json::to_string(&info).map_err(|e| {
+                        redis::RedisError::from((
+                            redis::ErrorKind::Client,
+                            "serialize token info",
+                            e.to_string(),
+                        ))
+                    })?
+                }
+                Err(_) => value,
+            }
+        };
+
+        let _: () = connection.set_ex(&new_key, value, ttl_seconds).await?;
+        let _: i64 = connection.del(old_key).await?;
+
+        Ok(Some(new_token))
+    }
+
     /// Builds the Redis key for a token.
     ///
     /// ## 繁體中文
