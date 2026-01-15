@@ -1,5 +1,28 @@
 //! # r-token example server
 //!
+//! ## 日本語
+//!
+//! `r_token` の使い方を示す最小構成の actix-web サンプルです：
+//! - token を発行（login）
+//! - `RUser` extractor でエンドポイントを保護
+//! - token を失効（logout）
+//!
+//! ### 実行
+//!
+//! ```bash
+//! cargo run
+//! ```
+//!
+//! ### 試す（curl）
+//!
+//! ```bash
+//! curl -X POST http://127.0.0.1:8080/login
+//! curl -H "Authorization: <token>" http://127.0.0.1:8080/info
+//! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8080/logout
+//! ```
+//!
+//! ## English
+//!
 //! A minimal actix-web application showcasing how to use `r_token`:
 //! - issue a token (login)
 //! - protect endpoints via the `RUser` extractor
@@ -18,41 +41,22 @@
 //! curl -H "Authorization: <token>" http://127.0.0.1:8080/info
 //! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8080/logout
 //! ```
-//!
-//! ## 繁體中文
-//!
-//! 這是一個最小化的 actix-web 範例，用來示範 `r_token` 的使用方式：
-//! - 簽發 token（login）
-//! - 透過 `RUser` Extractor 保護端點
-//! - 註銷 token（logout）
-//!
-//! ## 執行
-//!
-//! ```bash
-//! cargo run
-//! ```
-//!
-//! ## 測試（curl）
-//!
-//! ```bash
-//! curl -X POST http://127.0.0.1:8080/login
-//! curl -H "Authorization: <token>" http://127.0.0.1:8080/info
-//! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8080/logout
-//! ```
 
 use actix_web::cookie::Cookie;
 use actix_web::{HttpResponse, HttpServer, get, post, web};
 use r_token::{RTokenManager, RUser};
 
+/// ## 日本語
+///
+/// token を発行し、レスポンス body として返します。
+///
+/// 簡単のため、このサンプルでは固定のユーザー ID と TTL を使用します。
+///
+/// ## English
+///
 /// Issues a token and returns it as the response body.
 ///
 /// The example uses a fixed user id and TTL for simplicity.
-///
-/// ## 繁體中文
-///
-/// 簽發 token 並以 response body 回傳。
-///
-/// 為了簡化示範，此範例使用固定的使用者 id 與 TTL。
 #[post("/login")]
 async fn do_login(
     manager: web::Data<RTokenManager>,
@@ -71,30 +75,34 @@ async fn do_login(
         .body(token))
 }
 
+/// ## 日本語
+///
+/// 保護されたエンドポイントです。
+///
+/// 有効な `Authorization` header が必要です。抽出が成功すると `user.id` を利用できます。
+///
+/// ## English
+///
 /// A protected endpoint.
 ///
 /// Access requires a valid `Authorization` header; if extraction succeeds,
 /// `user.id` is available.
-///
-/// ## 繁體中文
-///
-/// 受保護端點。
-///
-/// 需要有效的 `Authorization` header；Extractor 成功後即可使用 `user.id`。
 #[get("/info")]
 async fn do_info(user: RUser) -> impl actix_web::Responder {
     format!("info: {}", user.id)
 }
 
+/// ## 日本語
+///
+/// 現在の token を失効させます。
+///
+/// このエンドポイント自体も保護されています。成功すると token はストアから削除されます。
+///
+/// ## English
+///
 /// Revokes the current token.
 ///
 /// This endpoint is protected; on success, the token is removed from the store.
-///
-/// ## 繁體中文
-///
-/// 註銷當前 token。
-///
-/// 此端點本身也受保護；成功後 token 會從儲存表中移除。
 #[post("/logout")]
 async fn do_logout(
     manager: web::Data<crate::RTokenManager>,
@@ -104,11 +112,13 @@ async fn do_logout(
     Ok(HttpResponse::Ok().body("logout success"))
 }
 
+/// ## 日本語
+///
+/// サンプルサーバーを起動します。
+///
+/// ## English
+///
 /// Starts the example server.
-///
-/// ## 繁體中文
-///
-/// 啟動範例伺服器。
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // 1. Initialize r-token manager (global singleton) | 初始化 r-token 管理器（全局单例）

@@ -8,6 +8,25 @@
 #![deny(unused)]
 //! # r-token
 //!
+//! ## 日本語
+//!
+//! actix-web 向けの軽量なインメモリ token 認証ヘルパーです。
+//!
+//! このライブラリは主に次の 2 つを提供します：
+//! - [`RTokenManager`]: token（UUID v4）の発行/失効と、インメモリストアの管理
+//! - [`RUser`]: `Authorization` を自動検証する actix-web extractor
+//!
+//! ## 認証の流れ
+//!
+//! 1. ログイン処理で [`RTokenManager::login`] を呼び、ユーザー ID と TTL（秒）を渡します。
+//! 2. token をクライアントへ返します（多くはプレーンテキストまたは JSON）。
+//! 3. クライアントは `Authorization` header で token を送ります：
+//!    - `Authorization: <token>`
+//!    - `Authorization: Bearer <token>`
+//! 4. handler が [`RUser`] を引数に持つと保護されたエンドポイントになります。抽出が成功すれば認証済みとして扱われ、失敗すれば actix-web がエラーを返します。
+//!
+//! ## English
+//!
 //! A small, in-memory token authentication helper for actix-web.
 //!
 //! The library exposes two main building blocks:
@@ -23,100 +42,100 @@
 //!    - `Authorization: Bearer <token>`
 //! 4. Any handler that declares an [`RUser`] parameter becomes a protected endpoint. If extraction
 //!    succeeds, the request is considered authenticated; otherwise actix-web returns an error.
-//!
-//! ## 繁體中文
-//!
-//! 這是一個為 actix-web 設計的輕量級、純記憶體 token 驗證輔助庫。
-//!
-//! 主要由兩個元件構成：
-//! - [`RTokenManager`]: 產生/註銷 token（UUID v4），並在記憶體中維護映射表。
-//! - [`RUser`]: actix-web 的 Extractor，會自動從 `Authorization` 讀取並驗證 token。
-//!
-//! ## 驗證流程
-//!
-//! 1. 登入端點呼叫 [`RTokenManager::login`]，傳入使用者 id 與 TTL（秒）。
-//! 2. token 回傳給客戶端（常見為純文字或 JSON）。
-//! 3. 客戶端透過 `Authorization` header 送回 token（支援 `Bearer ` 前綴或不帶前綴）。
-//! 4. 任何 handler 只要宣告 [`RUser`] 參數即視為受保護端點；Extractor 成功才會進入 handler。
 
 mod memory;
 mod models;
 #[cfg(feature = "redis")]
 mod redis;
 
+/// ## 日本語
+///
+/// token 送受信に使うデフォルトの Cookie 名です。
+///
+/// この名前は次で使用されます：
+/// - 例のサーバーが `/login` で Cookie をセットするとき
+/// - actix extractor が Cookie から token を読むとき
+///
+/// ## English
+///
 /// Default cookie name used for token transport.
 ///
 /// This name is used by:
 /// - the example servers when setting cookies on `/login`
 /// - the actix extractors when reading the token from cookies
-///
-/// ## 繁體中文
-///
-/// 預設的 token Cookie 名稱。
-///
-/// 這個名稱會被用在：
-/// - 範例伺服器的 `/login` 回應中設定 Cookie
-/// - actix Extractor 從 Cookie 讀取 token
 pub const TOKEN_COOKIE_NAME: &str = "r_token";
 
 #[cfg(feature = "actix")]
 #[derive(Clone, Debug)]
+/// ## 日本語
+///
+/// 複数の token 供給元がある場合に、どちらを優先するかの設定です。
+///
+/// ## English
+///
 /// Priority for selecting which token source to use when multiple are present.
-///
-/// ## 繁體中文
-///
-/// 當同時存在多種 token 來源時，選擇使用哪一種的優先順序。
 pub enum TokenSourcePriority {
+    /// ## 日本語
+    ///
+    /// Header（例：`Authorization`）を Cookie より優先します。
+    ///
+    /// ## English
+    ///
     /// Prefer headers (e.g. `Authorization`) over cookies.
-    ///
-    /// ## 繁體中文
-    ///
-    /// Header（例如 `Authorization`）優先於 Cookie。
     HeaderFirst,
+    /// ## 日本語
+    ///
+    /// Cookie を header より優先します。
+    ///
+    /// ## English
+    ///
     /// Prefer cookies over headers.
-    ///
-    /// ## 繁體中文
-    ///
-    /// Cookie 優先於 Header。
     CookieFirst,
 }
 
 #[cfg(feature = "actix")]
 #[derive(Clone, Debug)]
+/// ## 日本語
+///
+/// actix extractor の token 取得元を設定します。
+///
+/// `app_data(web::Data<TokenSourceConfig>)` として登録すると、次をカスタマイズできます：
+/// - どの header 名を順に探索するか
+/// - どの cookie 名を順に探索するか
+/// - header/cookie の優先順位
+///
+/// ## English
+///
 /// Token source configuration for actix extractors.
 ///
 /// You can register this as `app_data(web::Data<TokenSourceConfig>)` to customize:
 /// - which header names are scanned for a token
 /// - which cookie names are scanned for a token
 /// - the priority order between header/cookie
-///
-/// ## 繁體中文
-///
-/// actix Extractor 的 token 來源設定。
-///
-/// 你可以把它以 `app_data(web::Data<TokenSourceConfig>)` 的形式注入到 App，
-/// 用來自訂：
-/// - 會掃描哪些 header 名稱來取得 token
-/// - 會掃描哪些 cookie 名稱來取得 token
-/// - header/cookie 之間的優先順序
 pub struct TokenSourceConfig {
+    /// ## 日本語
+    ///
+    /// token 取得元の優先順位。
+    ///
+    /// ## English
+    ///
     /// Priority of token sources.
-    ///
-    /// ## 繁體中文
-    ///
-    /// token 來源優先順序。
     pub priority: TokenSourcePriority,
+    /// ## 日本語
+    ///
+    /// 順にチェックする header 名の一覧。
+    ///
+    /// ## English
+    ///
     /// Header names that will be checked in order.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 會依序檢查的 header 名稱列表。
     pub header_names: Vec<String>,
+    /// ## 日本語
+    ///
+    /// 順にチェックする cookie 名の一覧。
+    ///
+    /// ## English
+    ///
     /// Cookie names that will be checked in order.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 會依序檢查的 cookie 名稱列表。
     pub cookie_names: Vec<String>,
 }
 
@@ -132,17 +151,19 @@ impl Default for TokenSourceConfig {
 }
 
 #[cfg(feature = "actix")]
+/// ## 日本語
+///
+/// actix-web のリクエストから token を抽出します。
+///
+/// `app_data(web::Data<TokenSourceConfig>)` があればその設定を使い、なければ
+/// `TokenSourceConfig::default()` にフォールバックします。
+///
+/// ## English
+///
 /// Extracts a token from an actix-web request.
 ///
 /// The function reads configuration from `app_data(web::Data<TokenSourceConfig>)` if present;
 /// otherwise it falls back to `TokenSourceConfig::default()`.
-///
-/// ## 繁體中文
-///
-/// 從 actix-web 請求中抽取 token。
-///
-/// 若 App 有注入 `app_data(web::Data<TokenSourceConfig>)` 則會使用該設定；
-/// 否則使用 `TokenSourceConfig::default()`。
 pub fn extract_token_from_request(req: &actix_web::HttpRequest) -> Option<String> {
     use actix_web::web;
 
@@ -155,23 +176,31 @@ pub fn extract_token_from_request(req: &actix_web::HttpRequest) -> Option<String
 }
 
 #[cfg(feature = "actix")]
+/// ## 日本語
+///
+/// 明示的な設定を使って actix-web のリクエストから token を抽出します。
+///
+/// 解析のルール：
+/// - header は `Bearer <token>` と生の `<token>` の両方に対応します。
+/// - cookie は cookie value をそのまま token として扱います。
+///
+/// ## English
+///
 /// Extracts a token from an actix-web request using an explicit config.
 ///
 /// Token parsing behavior:
 /// - Header values support both `Bearer <token>` and raw `<token>` formats.
 /// - Cookie values use the raw cookie value as the token.
-///
-/// ## 繁體中文
-///
-/// 使用指定設定，從 actix-web 請求中抽取 token。
-///
-/// 解析行為：
-/// - Header 支援 `Bearer <token>` 與純 `<token>` 兩種格式。
-/// - Cookie 直接使用 cookie value 作為 token。
 pub fn extract_token_from_request_with_config(
     req: &actix_web::HttpRequest,
     cfg: &TokenSourceConfig,
 ) -> Option<String> {
+    // 日本語: header 名を順に見て、最初に見つかった token を返す。
+    //        `Authorization: Bearer <token>` と `Authorization: <token>` の両方に対応する。
+    //        - 値が UTF-8 でない header は無視する（to_str() が失敗するため）
+    // English: Scan header names in order and return the first token found.
+    //          Supports both `Authorization: Bearer <token>` and raw `Authorization: <token>`.
+    //          - Non-UTF8 headers are ignored (to_str() fails)
     let from_headers = || {
         cfg.header_names.iter().find_map(|name| {
             req.headers()
@@ -186,12 +215,18 @@ pub fn extract_token_from_request_with_config(
         })
     };
 
+    // 日本語: cookie 名を順に見て、最初に見つかった token を返す（cookie value をそのまま使う）。
+    // English: Scan cookie names in order and return the first token found (uses cookie value as-is).
     let from_cookies = || {
         cfg.cookie_names
             .iter()
             .find_map(|name| req.cookie(name).map(|cookie| cookie.value().to_string()))
     };
 
+    // 日本語: 設定された優先順位に従って header/cookie を選ぶ。
+    //        両方に token がある場合でも「どちらを優先するか」をここで決める。
+    // English: Choose header vs cookie by configured priority.
+    //          This decides which source wins when both are present.
     match cfg.priority {
         TokenSourcePriority::HeaderFirst => from_headers().or_else(from_cookies),
         TokenSourcePriority::CookieFirst => from_cookies().or_else(from_headers),

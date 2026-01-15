@@ -1,15 +1,18 @@
+//! ## 日本語
+//!
+//! Redis/Valkey をバックエンドにした token マネージャです。
+//!
+//! このモジュールは Redis 互換サーバ（Redis または Valkey）上に token を保存する
+//! 最小構成の実装を提供します。インメモリ版と同じ振る舞いを目指しつつ、永続化と失効は
+//! Redis の TTL（秒）に任せます。
+//!
+//! ## English
+//!
 //! Redis/Valkey-backed token manager.
 //!
 //! This module provides a minimal token store implementation backed by Redis-compatible
 //! servers (Redis or Valkey). It mirrors the in-memory manager's behavior, but persists
 //! tokens in Redis and relies on Redis TTL for expiration.
-//!
-//! ## 繁體中文
-//!
-//! 基於 Redis/Valkey 的 token 管理器。
-//!
-//! 本模組提供一個以 Redis 相容伺服器（Redis 或 Valkey）為後端的最小化 token 儲存實作。
-//! 行為上對齊記憶體版管理器，但 token 會存放在 Redis，並利用 Redis 的 TTL 自動過期。
 
 use redis::AsyncCommands;
 use std::sync::Arc;
@@ -21,17 +24,19 @@ use crate::models::RTokenInfo;
 #[cfg(feature = "actix")]
 use actix_web::web;
 
+/// ## 日本語
+///
+/// Redis/Valkey をバックエンドにした token マネージャです。
+///
+/// token は `prefix + token` を key、`user_id` を value として保存し、有効期限は
+/// Redis の TTL（秒）で管理します。
+///
+/// ## English
+///
 /// A token manager backed by Redis/Valkey.
 ///
 /// Tokens are stored as `prefix + token` keys with `user_id` as the value, and the
 /// key expiration is controlled by Redis TTL (seconds).
-///
-/// ## 繁體中文
-///
-/// 以 Redis/Valkey 為後端的 token 管理器。
-///
-/// token 會以 `prefix + token` 作為 key，value 存放 `user_id`，並透過 Redis 的 TTL（秒）
-/// 來控制到期時間。
 #[derive(Clone)]
 pub struct RTokenRedisManager {
     // Redis 里 token key 的前缀。
@@ -59,6 +64,20 @@ pub struct RTokenRedisManager {
 
 #[cfg(feature = "actix")]
 #[derive(Debug)]
+/// ## 日本語
+///
+/// actix-web から抽出される認証済みユーザーコンテキスト（Redis/Valkey バックエンド）です。
+///
+/// 抽出が成功した場合：
+/// - `id` は検証済みのユーザー ID
+/// - `token` はリクエストに含まれていた token の生文字列
+/// - RBAC 有効時は `roles` も含まれます
+///
+/// token の取得元は [`crate::extract_token_from_request`] により解決され、header/cookie 名と
+/// 優先順位を設定できます。
+///
+/// ## English
+///
 /// An authenticated request context extracted from actix-web using Redis/Valkey backend.
 ///
 /// If extraction succeeds:
@@ -68,37 +87,31 @@ pub struct RTokenRedisManager {
 ///
 /// The token source is resolved via [`crate::extract_token_from_request`], which supports
 /// configurable header/cookie names and priority.
-///
-/// ## 繁體中文
-///
-/// 由 actix-web 自動抽取的已驗證使用者上下文（Redis/Valkey 版本）。
-///
-/// Extractor 成功時：
-/// - `id` 為驗證後的使用者 id
-/// - `token` 為請求中帶來的 token 原文
-/// - 啟用 RBAC 時也會包含 `roles`
-///
-/// token 來源會透過 [`crate::extract_token_from_request`] 解析，支援可設定的
-/// header/cookie 名稱與優先順序。
 pub struct RRedisUser {
+    /// ## 日本語
+    ///
+    /// 検証後のユーザー ID。
+    ///
+    /// ## English
+    ///
     /// The validated user id.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證後的使用者 id。
     pub id: String,
+    /// ## 日本語
+    ///
+    /// リクエストに含まれていた token の生文字列。
+    ///
+    /// ## English
+    ///
     /// The raw token string from the request.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 來自請求的 token 字串原文。
     pub token: String,
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token に紐づく roles（RBAC 有効時）。
+    ///
+    /// ## English
+    ///
     /// Roles associated with the token (RBAC enabled).
-    ///
-    /// ## 繁體中文
-    ///
-    /// 與 token 綁定的角色列表（啟用 RBAC 時）。
     pub roles: Vec<String>,
 }
 
@@ -111,6 +124,11 @@ impl actix_web::FromRequest for RRedisUser {
         req: &actix_web::HttpRequest,
         _payload: &mut actix_web::dev::Payload,
     ) -> Self::Future {
+        // 日本語: app_data から Redis マネージャを取得する（見つからなければ 500）。
+        //        actix-web の extractor はリクエストごとに動くので、ここで clone して
+        //        async ブロックに move できる形にする。
+        // English: Fetch Redis manager from app_data (500 if missing).
+        //          Extractors run per request; we clone here so we can move it into the async block.
         let manager = match req.app_data::<web::Data<RTokenRedisManager>>() {
             Some(manager) => manager.clone(),
             None => {
@@ -122,18 +140,34 @@ impl actix_web::FromRequest for RRedisUser {
             }
         };
 
+        // 日本語: リクエストから token を抽出する（header/cookie の優先度は設定に従う）。
+        //        ここではまだエラーにせず、async 側で 401 に変換する（`?` しやすい形にするため）。
+        // English: Extract token from request (header/cookie priority is configurable).
+        //          We keep it as Option here and turn it into 401 inside the async block.
         let token = crate::extract_token_from_request(req);
 
         Box::pin(async move {
+            // 日本語: token が無ければ 401。
+            //        ここでの Unauthorized は「未ログイン」相当（入力が足りない）を意味する。
+            // English: 401 when token is missing.
+            //          This Unauthorized maps to “not logged in / missing credential”.
             let token = token.ok_or_else(|| actix_web::error::ErrorUnauthorized("Unauthorized"))?;
 
             #[cfg(feature = "rbac")]
+            // 日本語: RBAC 有効時は user_id と roles をまとめて検証する。
+            //        - Redis GET が失敗 => 500（インフラ障害）
+            //        - GET は成功したが値が無い => None（期限切れ/削除/不正 token）
+            // English: With RBAC enabled, validate and fetch both user_id and roles.
+            //          - Redis GET error => 500 (infra failure)
+            //          - GET ok but value missing => None (expired/deleted/invalid token)
             let user_info = manager
                 .validate_with_roles(&token)
                 .await
                 .map_err(|_| actix_web::error::ErrorInternalServerError("Redis error"))?;
 
             #[cfg(not(feature = "rbac"))]
+            // 日本語: RBAC 無効時は user_id のみ検証する（Some/None の意味は上と同じ）。
+            // English: Without RBAC, validate and fetch only user_id (same Some/None semantics).
             let user_info = manager
                 .validate(&token)
                 .await
@@ -141,6 +175,8 @@ impl actix_web::FromRequest for RRedisUser {
 
             #[cfg(feature = "rbac")]
             if let Some((user_id, roles)) = user_info {
+                // 日本語: 検証済みコンテキストを返す（以後 handler では id/roles を信頼できる）。
+                // English: Return validated request context (handler can trust id/roles).
                 return Ok(Self {
                     id: user_id,
                     token,
@@ -150,24 +186,30 @@ impl actix_web::FromRequest for RRedisUser {
 
             #[cfg(not(feature = "rbac"))]
             if let Some(user_id) = user_info {
+                // 日本語: 検証済みコンテキストを返す（以後 handler では id を信頼できる）。
+                // English: Return validated request context (handler can trust id).
                 return Ok(Self { id: user_id, token });
             }
 
+            // 日本語: token は渡されたが、存在しない/期限切れ/不正だったので 401
+            // English: Token was provided but is missing/expired/invalid => 401
             Err(actix_web::error::ErrorUnauthorized("Invalid token"))
         })
     }
 }
 
 impl RTokenRedisManager {
+    /// ## 日本語
+    ///
+    /// 既存の非同期 Redis 接続マネージャから新しいマネージャを作成します。
+    ///
+    /// `prefix` は常に `:` で終わるように正規化されます。
+    ///
+    /// ## English
+    ///
     /// Creates a new manager from an existing async Redis connection manager.
     ///
     /// The `prefix` is normalized to always end with `:`.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 使用既有的非同步 Redis 連線管理器建立新的管理器。
-    ///
-    /// `prefix` 會被正規化，確保一定以 `:` 結尾。
     pub fn new(prefix: impl Into<String>, connection: redis::aio::ConnectionManager) -> Self {
         let mut prefix = prefix.into();
         if !prefix.ends_with(':') {
@@ -181,17 +223,19 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// roles を紐づけた token を発行し、TTL 付きで Redis に保存します（RBAC 有効時）。
+    ///
+    /// token は UUID v4 文字列として生成されます。value は JSON エンコードされた
+    /// `RTokenInfo` として保存され、`user_id`、`roles`、`expire_at` を含みます。
+    ///
+    /// ## English
+    ///
     /// Issues a new token with associated roles and stores it in Redis with TTL.
     ///
     /// The token is generated as a UUID v4 string. The value is stored as a JSON-encoded
-    /// [`RTokenInfo`] containing `user_id`, `roles`, and `expire_at`.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 簽發一個帶角色的 token，並以 TTL 方式寫入 Redis。
-    ///
-    /// token 以 UUID v4 字串產生。value 會以 JSON 編碼的 [`RTokenInfo`] 儲存，
-    /// 內容包含 `user_id`、`roles` 與 `expire_at`。
+    /// `RTokenInfo` containing `user_id`, `roles`, and `expire_at`.
     pub async fn login_with_roles(
         &self,
         user_id: &str,
@@ -223,15 +267,17 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token に紐づく roles を返します（RBAC 有効時）。
+    ///
+    /// token が存在しない、または期限切れの場合は `Ok(None)` を返します。
+    ///
+    /// ## English
+    ///
     /// Returns the roles associated with a token.
     ///
     /// Returns `Ok(None)` if the token does not exist or has expired.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 取得 token 綁定的角色列表。
-    ///
-    /// 若 token 不存在或已過期，回傳 `Ok(None)`。
     pub async fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, redis::RedisError> {
         Ok(self
             .validate_with_roles(token)
@@ -240,15 +286,17 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// 既存 token の roles を更新し、現在の TTL を保持します（RBAC 有効時）。
+    ///
+    /// この操作は冪等です。token が存在しない場合でも成功として扱います。
+    ///
+    /// ## English
+    ///
     /// Updates roles for an existing token while preserving its current TTL.
     ///
     /// This operation is idempotent: if the token does not exist, it is treated as success.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 更新既有 token 的角色列表，並保留目前的 TTL。
-    ///
-    /// 此操作具冪等性：token 不存在也視為成功。
     pub async fn set_roles(
         &self,
         token: &str,
@@ -257,14 +305,22 @@ impl RTokenRedisManager {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
 
+        // 日本語: 現在の TTL を取得して、書き戻すときに維持する
+        // English: Fetch current TTL so we can preserve it on write-back
         let ttl_seconds: i64 = connection.ttl(&key).await?;
         if ttl_seconds == -2 {
             return Ok(());
         }
 
+        // 日本語: 現在の value を読み出す（並行削除などで None になり得る）
+        // English: Read current value (may become None due to concurrent deletion)
         let value: Option<String> = connection.get(&key).await?;
-        let Some(value) = value else { return Ok(()) };
+        let Some(value) = value else {
+            return Ok(());
+        };
 
+        // 日本語: 新フォーマット(JSON の RTokenInfo)なら roles を更新し、旧フォーマット(生 user_id)ならそれを user_id として扱う
+        // English: If value is JSON RTokenInfo, update roles; otherwise treat it as legacy plain user_id
         let mut info = serde_json::from_str::<RTokenInfo>(&value).unwrap_or(RTokenInfo {
             user_id: value,
             expire_at: 0,
@@ -272,6 +328,8 @@ impl RTokenRedisManager {
         });
         info.roles = roles.into();
 
+        // 日本語: JSON へ再シリアライズして書き戻す
+        // English: Serialize back to JSON and store it
         let new_value = serde_json::to_string(&info).map_err(|e| {
             redis::RedisError::from((
                 redis::ErrorKind::Client,
@@ -280,27 +338,30 @@ impl RTokenRedisManager {
             ))
         })?;
 
-        if ttl_seconds > 0 {
-            let _: () = connection
-                .set_ex(key, new_value, ttl_seconds as u64)
-                .await?;
-        } else {
-            let _: () = connection.set(key, new_value).await?;
+        match ttl_seconds {
+            ttl if ttl >= 0 => {
+                let _: () = connection.set_ex(key, new_value, ttl as u64).await?;
+            }
+            _ => {
+                let _: () = connection.set(key, new_value).await?;
+            }
         }
 
         Ok(())
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token を検証し、ユーザー ID と roles を返します（RBAC 有効時）。
+    ///
+    /// token が存在しない、または期限切れの場合は `Ok(None)` を返します。
+    ///
+    /// ## English
+    ///
     /// Validates a token and returns both user id and roles (RBAC enabled).
     ///
     /// Returns `Ok(None)` when the token does not exist or has expired.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證 token，並在 RBAC 啟用時同時回傳使用者 id 與角色列表。
-    ///
-    /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
     pub async fn validate_with_roles(
         &self,
         token: &str,
@@ -320,15 +381,17 @@ impl RTokenRedisManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token を検証し、ユーザー ID を返します（RBAC 有効時）。
+    ///
+    /// token が存在しない、または期限切れの場合は `Ok(None)` を返します。
+    ///
+    /// ## English
+    ///
     /// Validates a token and returns the associated user id (RBAC enabled).
     ///
     /// Returns `Ok(None)` when the token does not exist or has expired.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證 token，並在 RBAC 啟用時回傳使用者 id。
-    ///
-    /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         Ok(self
             .validate_with_roles(token)
@@ -336,11 +399,13 @@ impl RTokenRedisManager {
             .map(|(user_id, _roles)| user_id))
     }
 
+    /// ## 日本語
+    ///
+    /// Redis/Valkey に接続してマネージャを作成します。
+    ///
+    /// ## English
+    ///
     /// Connects to Redis/Valkey and creates a manager.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 連線至 Redis/Valkey 並建立管理器。
     pub async fn connect(
         redis_url: &str,
         prefix: impl Into<String>,
@@ -358,21 +423,23 @@ impl RTokenRedisManager {
         Ok(Self::new(prefix, connection))
     }
 
+    /// ## 日本語
+    ///
+    /// token key の残り TTL（秒）を返します。
+    ///
+    /// 本メソッドは Redis の TTL の意味をそのまま返します：
+    /// - key が存在しない：`Ok(None)`
+    /// - key は存在するが期限がない：`Ok(Some(-1))`
+    /// - 残り TTL（秒）：`Ok(Some(n))`（n >= 0）
+    ///
+    /// ## English
+    ///
     /// Returns the remaining TTL in seconds for a token key.
     ///
     /// This method follows Redis TTL semantics:
     /// - `Ok(None)` when the key does not exist
     /// - `Ok(Some(-1))` when the key exists but has no expiration
     /// - `Ok(Some(n))` (n >= 0) for the remaining TTL in seconds
-    ///
-    /// ## 繁體中文
-    ///
-    /// 回傳 token key 的剩餘 TTL（秒）。
-    ///
-    /// 本方法遵循 Redis TTL 的語意：
-    /// - key 不存在：`Ok(None)`
-    /// - key 存在但沒有過期時間：`Ok(Some(-1))`
-    /// - 剩餘 TTL（秒）：`Ok(Some(n))`（n >= 0）
     pub async fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
@@ -383,19 +450,21 @@ impl RTokenRedisManager {
         Ok(Some(ttl))
     }
 
+    /// ## 日本語
+    ///
+    /// token key の期限を「現在から `ttl_seconds`」に更新します。
+    ///
+    /// 返り値：
+    /// - key が存在し、更新に成功：`Ok(true)`
+    /// - key が存在しない：`Ok(false)`
+    ///
+    /// ## English
+    ///
     /// Updates the token key expiration to `ttl_seconds` from now.
     ///
     /// Returns:
     /// - `Ok(true)` if the key exists and the expiration was updated
     /// - `Ok(false)` if the key does not exist
-    ///
-    /// ## 繁體中文
-    ///
-    /// 將 token key 的過期時間更新為「從現在起算 `ttl_seconds`」。
-    ///
-    /// 回傳：
-    /// - key 存在且更新成功：`Ok(true)`
-    /// - key 不存在：`Ok(false)`
     pub async fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
@@ -404,28 +473,35 @@ impl RTokenRedisManager {
         Ok(updated)
     }
 
+    /// ## 日本語
+    ///
+    /// 新しい token を発行し、古い token key を削除します。
+    ///
+    /// 新 token は `ttl_seconds` で保存されます。古い token が存在しない場合は `Ok(None)` を
+    /// 返します。
+    ///
+    /// RBAC 有効時に value が JSON エンコードされた `RTokenInfo` であれば `expire_at` を
+    /// 新しい TTL に合わせて更新します。旧形式/プレーンな value はそのままコピーします。
+    ///
+    /// ## English
+    ///
     /// Issues a new token and deletes the old token key.
     ///
     /// The new token will be stored with `ttl_seconds`. If the old token does not exist,
     /// returns `Ok(None)`.
     ///
-    /// When RBAC is enabled and the stored value is a JSON-encoded [`RTokenInfo`], the
+    /// When RBAC is enabled and the stored value is a JSON-encoded `RTokenInfo`, the
     /// `expire_at` field is updated to match the new TTL. For legacy/plain values, the
     /// raw value is copied as-is.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 換發新 token，並刪除舊 token key。
-    ///
-    /// 新 token 會以 `ttl_seconds` 寫入 Redis。若舊 token 不存在，回傳 `Ok(None)`。
-    ///
-    /// 啟用 RBAC 且 value 為 JSON 編碼的 [`RTokenInfo`] 時，會同步更新 `expire_at`；
-    /// 若為舊格式/純字串 value，則會原樣複製。
     pub async fn rotate(
         &self,
         token: &str,
         ttl_seconds: u64,
     ) -> Result<Option<String>, redis::RedisError> {
+        // 日本語: 旧 token の key を組み立てて、value を読み出す（無ければ None）。
+        //        ここで None になるのは「すでに期限切れで消えた」か「最初から存在しない」ケース。
+        // English: Build old key and fetch its value (None if missing).
+        //          None means either “already expired and removed” or “never existed”.
         let old_key = self.key(token);
         let mut connection = self.connection.lock().await;
 
@@ -439,6 +515,12 @@ impl RTokenRedisManager {
 
         #[cfg(feature = "rbac")]
         let value = {
+            // 日本語: RBAC 有効時は value が JSON（RTokenInfo）である可能性がある。
+            //        JSON として読めたときだけ expire_at を新 TTL に合わせて更新し、読めない場合は
+            //        旧形式（プレーン user_id）としてそのままコピーする。
+            // English: With RBAC enabled, value may be JSON (RTokenInfo).
+            //          If parsing succeeds, update expire_at to match new TTL; otherwise treat it
+            //          as legacy plain user_id and copy as-is.
             let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
                 .timestamp_millis() as u64;
             match serde_json::from_str::<RTokenInfo>(&value) {
@@ -456,32 +538,42 @@ impl RTokenRedisManager {
             }
         };
 
+        // 日本語: 新 key に TTL 付きで書き込み、旧 key を削除する（実質的に token ローテーション）。
+        //        set_ex が成功して del が失敗すると「二重に有効」になる可能性があるが、
+        //        ここでは簡潔さを優先している（必要なら Lua/Tx で原子的にできる）。
+        // English: Write new key with TTL, then delete old key (token rotation).
+        //          If SETEX succeeds but DEL fails, both tokens could be valid; we keep it simple
+        //          here (can be made atomic via Lua/Tx if needed).
         let _: () = connection.set_ex(&new_key, value, ttl_seconds).await?;
         let _: i64 = connection.del(old_key).await?;
 
         Ok(Some(new_token))
     }
 
+    /// ## 日本語
+    ///
+    /// token から Redis key を組み立てます（prefix 付き）。
+    ///
+    /// ## English
+    ///
     /// Builds the Redis key for a token.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 依照 prefix 組合 token 的 Redis key。
     fn key(&self, token: &str) -> String {
         // 这里我们约定 prefix 总是以 ':' 结尾，因此直接拼接即可。
         format!("{}{}", self.prefix, token)
     }
 
+    /// ## 日本語
+    ///
+    /// `user_id` に対して新しい token を発行し、TTL 付きで Redis に保存します。
+    ///
+    /// `ttl_seconds` は秒として扱います。期限切れ token は Redis により自動的に削除されます。
+    ///
+    /// ## English
+    ///
     /// Issues a new token for `user_id` and stores it in Redis with TTL.
     ///
     /// `ttl_seconds` is interpreted as seconds. Expired tokens are removed automatically
     /// by Redis.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 為 `user_id` 簽發新 token，並以 TTL 方式寫入 Redis。
-    ///
-    /// `ttl_seconds` 以秒為單位。token 到期後會由 Redis 自動移除。
     pub async fn login(
         &self,
         user_id: &str,
@@ -503,15 +595,17 @@ impl RTokenRedisManager {
         Ok(token)
     }
 
+    /// ## 日本語
+    ///
+    /// Redis から key を削除して token を失効させます。
+    ///
+    /// この操作は冪等です。存在しない token を削除しても成功として扱います。
+    ///
+    /// ## English
+    ///
     /// Revokes a token by deleting it from Redis.
     ///
     /// This operation is idempotent: deleting a non-existing token is treated as success.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 透過從 Redis 刪除 key 來註銷 token。
-    ///
-    /// 此操作具冪等性：刪除不存在的 token 也視為成功。
     pub async fn logout(&self, token: &str) -> Result<(), redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
@@ -524,15 +618,17 @@ impl RTokenRedisManager {
         Ok(())
     }
 
+    /// ## 日本語
+    ///
+    /// token を検証し、有効であれば紐づく `user_id` を返します。
+    ///
+    /// token が存在しない、または期限切れの場合は `Ok(None)` を返します。
+    ///
+    /// ## English
+    ///
     /// Validates a token and returns the associated `user_id` if present.
     ///
     /// Returns `Ok(None)` when the token does not exist or has expired.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證 token，若存在則回傳對應的 `user_id`。
-    ///
-    /// 當 token 不存在或已過期時，回傳 `Ok(None)`。
     #[cfg(not(feature = "rbac"))]
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         let key = self.key(token);

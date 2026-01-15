@@ -6,6 +6,20 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// ## 日本語
+///
+/// 認証 token の発行・保存・失効を行うマネージャです。
+///
+/// actix-web のアプリケーション state（例：`web::Data<RTokenManager>`）に保持する想定で、
+/// 内部では `Arc<Mutex<...>>` を使って状態を共有します。そのため `Clone` は同じストアへの
+/// ハンドルを増やすだけです。
+///
+/// token は UUID v4 文字列として生成され、次と紐づきます：
+/// - ユーザー ID（`String`）
+/// - 有効期限（Unix epoch ミリ秒）
+///
+/// ## English
+///
 /// Issues, stores, and revokes authentication tokens.
 ///
 /// This type is designed to be stored in actix-web application state
@@ -15,55 +29,50 @@ use std::{
 /// Tokens are generated as UUID v4 strings. Each token is associated with:
 /// - a user id (`String`)
 /// - an expiration timestamp (Unix epoch milliseconds)
-///
-/// ## 繁體中文
-///
-/// 負責簽發、儲存與註銷 token 的管理器。
-///
-/// 一般會放在 actix-web 的 application state 中（例如 `web::Data<RTokenManager>`）。
-/// 內部以 `Arc<Mutex<...>>` 共享狀態，因此 `Clone` 只是在同一份映射表上增加一個引用。
-///
-/// token 以 UUID v4 字串產生，並會綁定：
-/// - 使用者 id（`String`）
-/// - 到期時間（Unix epoch 毫秒）
 #[derive(Clone, Default)]
 pub struct RTokenManager {
+    /// ## 日本語
+    ///
+    /// インメモリの token ストア。
+    ///
+    /// ## English
+    ///
     /// In-memory token store.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 記憶體中的 token 儲存表。
     // store: Arc<Mutex<HashMap<String, String>>>,
     store: Arc<Mutex<HashMap<String, RTokenInfo>>>,
 }
 
 impl RTokenManager {
+    /// ## 日本語
+    ///
+    /// 空のマネージャを作成します。
+    ///
+    /// ## English
+    ///
     /// Creates an empty manager.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 建立一個空的管理器。
     pub fn new() -> Self {
         Self {
             store: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
+    /// ## 日本語
+    ///
+    /// 指定ユーザー ID の新しい token を発行します。
+    ///
+    /// `expire_time` は TTL（秒）として扱います。保存された有効期限が現在時刻より過去であれば、
+    /// token は無効とみなされます。
+    ///
+    /// 内部 mutex が poisoned の場合は [`RTokenError::MutexPoisoned`] を返します。
+    ///
+    /// ## English
+    ///
     /// Issues a new token for the given user id.
     ///
     /// `expire_time` is treated as TTL in seconds. The token will be considered invalid
     /// once the stored expiration timestamp is earlier than the current time.
     ///
     /// Returns [`RTokenError::MutexPoisoned`] if the internal mutex is poisoned.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 為指定使用者 id 簽發新 token。
-    ///
-    /// `expire_time` 會被視為 TTL（秒）。當儲存的到期時間早於目前時間時，token 會被視為無效。
-    ///
-    /// 若內部 mutex 發生 poisoned，會回傳 [`RTokenError::MutexPoisoned`]。
-    // pub fn login(&self, id: &str, expire_time: u64,role:impl Into<Vec<String>>) -> Result<String, RTokenError> {
     pub fn login(&self, id: &str, expire_time: u64) -> Result<String, RTokenError> {
         let token = uuid::Uuid::new_v4().to_string();
         // Acquire the write lock and insert the token-user mapping into the store
@@ -87,6 +96,17 @@ impl RTokenManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// 指定ユーザー ID と役割（roles）を紐づけた新しい token を発行します（RBAC 有効時）。
+    ///
+    /// `expire_time` は TTL（秒）として扱います。
+    ///
+    /// ## English
+    ///
+    /// Issues a new token for the given user id and roles (RBAC enabled).
+    ///
+    /// `expire_time` is treated as TTL in seconds.
     pub fn login_with_roles(
         &self,
         id: &str,
@@ -112,6 +132,17 @@ impl RTokenManager {
 
     // pub fn set_role(&self, token: &str, role: impl Into<Vec<String>>) -> Result<(), RTokenError> {
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// 既存 token の roles を更新します（RBAC 有効時）。
+    ///
+    /// token が存在しない場合でも成功として扱います（冪等）。
+    ///
+    /// ## English
+    ///
+    /// Updates roles for an existing token (RBAC enabled).
+    ///
+    /// This operation is idempotent: if the token does not exist, it is treated as success.
     pub fn set_roles(&self, token: &str, roles: impl Into<Vec<String>>) -> Result<(), RTokenError> {
         let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
         if let Some(info) = store.get_mut(token) {
@@ -121,22 +152,35 @@ impl RTokenManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token に紐づく roles を返します（RBAC 有効時）。
+    ///
+    /// token が存在しない場合は `Ok(None)` を返します。
+    ///
+    /// ## English
+    ///
+    /// Returns roles associated with a token (RBAC enabled).
+    ///
+    /// Returns `Ok(None)` if the token does not exist.
     pub fn get_roles(&self, token: &str) -> Result<Option<Vec<String>>, RTokenError> {
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
         Ok(store.get(token).map(|info| info.roles.clone()))
     }
 
+    /// ## 日本語
+    ///
+    /// token をインメモリストアから削除して失効させます。
+    ///
+    /// この操作は冪等です。存在しない token を削除しても成功として扱います。
+    /// 内部 mutex が poisoned の場合は [`RTokenError::MutexPoisoned`] を返します。
+    ///
+    /// ## English
+    ///
     /// Revokes a token by removing it from the in-memory store.
     ///
     /// This operation is idempotent: removing a non-existing token is treated as success.
     /// Returns [`RTokenError::MutexPoisoned`] if the internal mutex is poisoned.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 從記憶體儲存表中移除 token，以達到註銷效果。
-    ///
-    /// 此操作具冪等性：移除不存在的 token 也視為成功。
-    /// 若內部 mutex 發生 poisoned，會回傳 [`RTokenError::MutexPoisoned`]。
     pub fn logout(&self, token: &str) -> Result<(), RTokenError> {
         // self.store.lock().unwrap().remove(token);
         self.store
@@ -146,34 +190,39 @@ impl RTokenManager {
         Ok(())
     }
 
+    /// ## 日本語
+    ///
+    /// token に保存されている有効期限（Unix epoch ミリ秒）を返します。
+    ///
+    /// token が存在しない場合は `Ok(None)` を返します。本メソッドは token の期限切れ判定は
+    /// 行いません。
+    ///
+    /// ## English
+    ///
     /// Returns the stored expiration timestamp for a token (milliseconds since Unix epoch).
     ///
     /// Returns `Ok(None)` if the token does not exist. This method does not validate
     /// whether the token has already expired.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 回傳 token 的到期時間戳（Unix epoch 毫秒）。
-    ///
-    /// 若 token 不存在，回傳 `Ok(None)`。本方法不會檢查 token 是否已過期。
     pub fn expires_at(&self, token: &str) -> Result<Option<u64>, RTokenError> {
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
         Ok(store.get(token).map(|info| info.expire_at))
     }
 
+    /// ## 日本語
+    ///
+    /// token の残り TTL（秒）を返します。
+    ///
+    /// 返り値：
+    /// - token が存在しない：`Ok(None)`
+    /// - token がすでに期限切れ：`Ok(Some(0))`（本メソッドでは削除しません）
+    ///
+    /// ## English
+    ///
     /// Returns the remaining TTL in seconds for a token.
     ///
     /// Returns:
     /// - `Ok(None)` when the token does not exist
     /// - `Ok(Some(0))` when the token is already expired (it is not removed here)
-    ///
-    /// ## 繁體中文
-    ///
-    /// 回傳 token 剩餘 TTL（秒）。
-    ///
-    /// 回傳：
-    /// - token 不存在：`Ok(None)`
-    /// - token 已過期：`Ok(Some(0))`（本方法不會在此移除它）
     pub fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, RTokenError> {
         let now_ms = Utc::now().timestamp_millis() as u64;
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
@@ -190,19 +239,21 @@ impl RTokenManager {
         Ok(Some(remaining_seconds))
     }
 
+    /// ## 日本語
+    ///
+    /// token の有効期限を `now + ttl_seconds` に延長します。
+    ///
+    /// 返り値：
+    /// - token が存在し、期限切れでない：`Ok(true)`
+    /// - token が存在しない、または期限切れ：`Ok(false)`（期限切れの場合は削除します）
+    ///
+    /// ## English
+    ///
     /// Extends a token's lifetime to `now + ttl_seconds`.
     ///
     /// Returns:
     /// - `Ok(true)` if the token exists and is not expired
     /// - `Ok(false)` if the token does not exist or is expired (expired tokens are removed)
-    ///
-    /// ## 繁體中文
-    ///
-    /// 將 token 續期為 `now + ttl_seconds`。
-    ///
-    /// 回傳：
-    /// - token 存在且未過期：`Ok(true)`
-    /// - token 不存在或已過期：`Ok(false)`（若已過期會順便移除）
     pub fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, RTokenError> {
         let now = Utc::now();
         let ttl = chrono::Duration::seconds(ttl_seconds as i64);
@@ -222,20 +273,23 @@ impl RTokenManager {
         Ok(true)
     }
 
+    /// ## 日本語
+    ///
+    /// 同じユーザー（および roles）に対して新しい token を発行し、古い token を失効させます。
+    ///
+    /// 新しい token の TTL は「現在から `ttl_seconds`」になります。
+    ///
+    /// 古い token が存在しない、または期限切れの場合は `Ok(None)` を返します（期限切れの場合は
+    /// 削除します）。
+    ///
+    /// ## English
+    ///
     /// Issues a new token for the same user (and roles) and revokes the old token.
     ///
     /// The new token will have a lifetime of `ttl_seconds` from now.
     ///
     /// Returns `Ok(None)` if the old token does not exist or is expired (expired tokens
     /// are removed).
-    ///
-    /// ## 繁體中文
-    ///
-    /// 為同一位使用者（以及角色）換發新 token，並註銷舊 token。
-    ///
-    /// 新 token 的 TTL 會以現在起算 `ttl_seconds`。
-    ///
-    /// 若舊 token 不存在或已過期，回傳 `Ok(None)`（若已過期會順便移除）。
     pub fn rotate(&self, token: &str, ttl_seconds: u64) -> Result<Option<String>, RTokenError> {
         let now = Utc::now();
         let ttl = chrono::Duration::seconds(ttl_seconds as i64);
@@ -263,11 +317,13 @@ impl RTokenManager {
         Ok(Some(new_token))
     }
 
+    /// ## 日本語
+    ///
+    /// インメモリストアから期限切れの token を削除し、削除した件数を返します。
+    ///
+    /// ## English
+    ///
     /// Removes expired tokens from the in-memory store and returns how many were removed.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 從記憶體儲存表中移除已過期的 token，並回傳移除數量。
     pub fn prune_expired(&self) -> Result<usize, RTokenError> {
         let now = Utc::now().timestamp_millis() as u64;
         let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
@@ -277,21 +333,23 @@ impl RTokenManager {
         Ok(original_len - store.len())
     }
 
+    /// ## 日本語
+    ///
+    /// token を検証し、有効であれば紐づくユーザー ID を返します。
+    ///
+    /// 振る舞い：
+    /// - token が存在し、期限切れでない：`Ok(Some(user_id))`
+    /// - token が存在しない、または期限切れ：`Ok(None)`
+    /// - 期限切れ token は検証時にストアから削除されます
+    ///
+    /// ## English
+    ///
     /// Validates a token and returns the associated user id if present.
     ///
     /// Behavior:
     /// - Returns `Ok(Some(user_id))` when the token exists and is not expired.
     /// - Returns `Ok(None)` when the token does not exist or is expired.
     /// - Expired tokens are removed from the in-memory store during validation.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證 token，若有效則回傳對應的使用者 id。
-    ///
-    /// 行為：
-    /// - token 存在且未過期：回傳 `Ok(Some(user_id))`
-    /// - token 不存在或已過期：回傳 `Ok(None)`
-    /// - 若 token 已過期，會在驗證時從記憶體儲存表中移除
     pub fn validate(&self, token: &str) -> Result<Option<String>, RTokenError> {
         #[cfg(feature = "rbac")]
         {
@@ -317,15 +375,17 @@ impl RTokenManager {
     }
 
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token を検証し、ユーザー ID と roles を返します（RBAC 有効時）。
+    ///
+    /// 期限切れの扱いは [`RTokenManager::validate`] と同じです。
+    ///
+    /// ## English
+    ///
     /// Validates a token and returns both user id and roles (RBAC enabled).
     ///
     /// This has the same expiration behavior as [`RTokenManager::validate`].
-    ///
-    /// ## 繁體中文
-    ///
-    /// 驗證 token，並在 RBAC 啟用時同時回傳使用者 id 與角色列表。
-    ///
-    /// 到期行為與 [`RTokenManager::validate`] 相同。
     pub fn validate_with_roles(
         &self,
         token: &str,
@@ -344,6 +404,20 @@ impl RTokenManager {
     }
 }
 
+/// ## 日本語
+///
+/// actix-web から抽出される認証済みユーザーコンテキストです。
+///
+/// 抽出が成功した場合：
+/// - `id` は [`RTokenManager::login`] に渡したユーザー ID
+/// - `token` はリクエストに含まれていた token の生文字列
+///
+/// token は `Authorization` header から読み取ります。次の形式に対応します：
+/// - `Authorization: <token>`
+/// - `Authorization: Bearer <token>`
+///
+/// ## English
+///
 /// An authenticated request context extracted from actix-web.
 ///
 /// If extraction succeeds, `id` is the user id previously passed to
@@ -353,58 +427,66 @@ impl RTokenManager {
 /// are accepted:
 /// - `Authorization: <token>`
 /// - `Authorization: Bearer <token>`
-///
-/// ## 繁體中文
-///
-/// 由 actix-web 自動抽取的已驗證使用者上下文。
-///
-/// Extractor 成功時：
-/// - `id` 會是先前傳給 [`RTokenManager::login`] 的使用者 id
-/// - `token` 會是請求中帶來的 token 原文
-///
-/// token 會從 `Authorization` header 讀取，支援以下格式：
-/// - `Authorization: <token>`
-/// - `Authorization: Bearer <token>`
 #[cfg(feature = "actix")]
 #[derive(Debug)]
 pub struct RUser {
+    /// ## 日本語
+    ///
+    /// token に紐づくユーザー ID。
+    ///
+    /// ## English
+    ///
     /// The user id associated with the token.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 與 token 綁定的使用者 id。
     pub id: String,
 
+    /// ## 日本語
+    ///
+    /// リクエストに含まれていた token の生文字列。
+    ///
+    /// ## English
+    ///
     /// The raw token string from the request.
-    ///
-    /// ## 繁體中文
-    ///
-    /// 來自請求的 token 字串原文。
     pub token: String,
     #[cfg(feature = "rbac")]
+    /// ## 日本語
+    ///
+    /// token に紐づく roles（RBAC 有効時）。
+    ///
+    /// ## English
+    ///
+    /// Roles associated with the token (RBAC enabled).
     pub roles: Vec<String>,
 }
 
 #[cfg(feature = "rbac")]
 impl RUser {
+    /// ## 日本語
+    ///
+    /// 指定した role を持つかどうかを返します。
+    ///
+    /// ## English
+    ///
+    /// Returns whether the user has the given role.
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
     }
 }
 
+/// ## 日本語
+///
+/// actix-web のリクエストから [`RUser`] を抽出します。
+///
+/// 失敗時：
+/// - 500：`app_data` にマネージャが無い、または mutex が poisoned
+/// - 401：token が無い／無効／期限切れ
+///
+/// ## English
+///
 /// Extracts [`RUser`] from an actix-web request.
 ///
 /// Failure modes:
 /// - 500: manager is missing from `app_data`, or mutex is poisoned
 /// - 401: token is missing, invalid, or expired
-///
-/// ## 繁體中文
-///
-/// 從 actix-web 請求中抽取 [`RUser`]。
-///
-/// 失敗情況：
-/// - 500：`app_data` 中找不到管理器，或 mutex poisoned
-/// - 401：token 缺失、無效、或已過期
 #[cfg(feature = "actix")]
 impl actix_web::FromRequest for RUser {
     type Error = actix_web::Error;
