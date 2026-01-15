@@ -1,117 +1,119 @@
 # r-token
 
-**r-token** is a small token authentication helper for Rust and `actix-web`.
+README: 日本語（このページ） | [English](README.en.md)
 
-It provides two token managers:
+**r-token** は Rust と `actix-web` 向けの小さな token 認証ヘルパーです。
 
-- **In-memory**: `RTokenManager` stores tokens in memory with an expiration timestamp.
-- **Redis/Valkey** (optional): `RTokenRedisManager` stores tokens in Redis with TTL.
+token マネージャは 2 種類あります：
 
-For `actix-web`, r-token follows a “parameter-as-authentication” style: add `RUser` to handler parameters, and the request is authenticated automatically via the Actix extractor mechanism.
+- **インメモリ**: `RTokenManager` が token をメモリ上に保持し、期限は絶対時刻（ミリ秒）で管理します。
+- **Redis/Valkey（任意）**: `RTokenRedisManager` が token を Redis に保存し、期限は Redis の TTL（秒）に任せます。
 
-## Features
+`actix-web` では “parameter-as-authentication” スタイルを採用しています。handler の引数に `RUser` を追加するだけで、Actix の extractor が `Authorization`（または cookie）を自動検証し、リクエストを認証済みにします。
 
-- **Zero boilerplate**: no custom middleware required for basic header auth.
-- **Extractor-first**: declaring `RUser` protects the route.
-- **Thread-safe, shared state**: `RTokenManager` is `Clone` and shares an in-memory store.
-- **TTL support**:
-  - In-memory: tokens expire based on a per-login TTL (seconds).
-  - Redis/Valkey: expiration is enforced by Redis TTL (seconds).
-- **Redis/Valkey backend (optional)**: `RTokenRedisManager` stores `user_id` by token key.
+## 特長
 
-## Security notes
+- **ボイラープレート最小**: 基本的な header 認証に独自ミドルウェア不要。
+- **Extractor-first**: `RUser` を引数に書くだけでルートを保護。
+- **スレッドセーフな共有状態**: `RTokenManager` は `Clone` でき、同じインメモリストアを共有。
+- **TTL 対応**:
+  - インメモリ: login 時の TTL（秒）から期限を計算。
+  - Redis/Valkey: Redis の TTL（秒）が期限を強制。
+- **Redis/Valkey バックエンド（任意）**: `RTokenRedisManager` が `prefix + token` を key として保存。
 
-- This library implements bearer-token authentication. Always use HTTPS in production.
-- Token strings grant access. Treat them like passwords: do not log them, do not store them in plaintext client storage without careful threat modeling.
-- The Redis backend stores `user_id` as the Redis value. If you need stronger protection against Redis data disclosure, consider storing a hashed token (not currently implemented by this crate).
+## セキュリティ注意
 
-## Status
+- 本ライブラリは bearer-token 認証です。本番では必ず HTTPS を使ってください。
+- token 文字列はアクセス権そのものです。パスワード同様に扱い、ログに出さない／脅威モデル無しでクライアント側に平文保存しないでください。
+- Redis バックエンドは value として `user_id`（または RBAC 時は JSON）を保存します。Redis のデータ漏えいが懸念される場合は、token を hash 化して key として保存する方式を検討してください（現状この crate では未実装）。
 
-This project is in active development. Review the source code and tests before adopting it in security-sensitive environments.
+## ステータス
 
-We have released a stable version, but the API is not yet frozen. We will maintain backward compatibility and will not introduce breaking changes.
+本プロジェクトは活発に開発中です。セキュリティ要件が厳しい環境では、導入前にソースとテストを確認してください。
 
-## Installation
+安定版はリリースしていますが、API はまだ完全固定ではありません。後方互換性を維持し、破壊的変更は導入しない方針です。
 
-Add r-token to your `Cargo.toml`:
+## インストール
+
+`Cargo.toml` に追加します：
 
 ```toml
 [dependencies]
-r-token = "1.0.0"
+r-token = "1.0.2"
 ```
 
-## Feature flags
+## Cargo features
 
-r-token uses Cargo features to keep dependencies optional:
+r-token は Cargo features で依存を任意化しています：
 
-- `actix` (default): enables the `RUser` extractor and actix-web integration.
-- `redis`: enables Redis/Valkey support via the `redis` crate.
-- `redis-actix`: convenience feature = `redis` + `actix`.
-- `rbac`: enables role-based access control (RBAC) support.
+- `actix`（デフォルト）: `RUser` extractor と actix-web 連携を有効化します。
+- `redis`: `redis` crate を使った Redis/Valkey バックエンドを有効化します。
+- `redis-actix`: 便利 feature（`redis` + `actix`）。
+- `rbac`: ロールベースアクセス制御（RBAC）を有効化します。
 
-Examples:
-
-```toml
-[dependencies]
-r-token = { version = "1.0.0", default-features = false }
-```
+例：
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.0", features = ["redis-actix"] }
+r-token = { version = "1.0.2", default-features = false }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.0", features = ["rbac"] }
+r-token = { version = "1.0.2", features = ["redis-actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.0", features = ["redis-actix", "rbac"] }
+r-token = { version = "1.0.2", features = ["rbac"] }
+```
+
+```toml
+[dependencies]
+r-token = { version = "1.0.2", features = ["redis-actix", "rbac"] }
 ```
 
 ## Authorization header
 
-The `RUser` extractor (and the Redis example server) reads the token from `Authorization` and supports:
+`RUser` extractor（および Redis サンプルサーバー）は `Authorization` から token を読み取り、次の形式に対応します：
 
 ```text
 Authorization: <token>
 Authorization: Bearer <token>
 ```
 
-## API overview
+## API 概要
 
-Core types:
+コア型：
 
-- `RTokenManager` (always available): issues and revokes tokens in memory.
-- `RTokenError` (always available): error type used by in-memory manager.
+- `RTokenManager`（常に利用可）: インメモリで token を発行・失効します。
+- `RTokenError`（常に利用可）: インメモリマネージャが使うエラー型です。
 
-Actix integration (requires `actix`, enabled by default):
+Actix 連携（`actix` が必要、デフォルトで有効）：
 
-- `RUser`: `actix_web::FromRequest` extractor that validates `Authorization`.
+- `RUser`: `Authorization`（または cookie）を検証する `actix_web::FromRequest` extractor。
 
-Redis backend (requires `redis`):
+Redis バックエンド（`redis` が必要）：
 
-- `RTokenRedisManager`: issues, validates, and revokes tokens backed by Redis/Valkey.
+- `RTokenRedisManager`: Redis/Valkey をバックエンドに token を発行・検証・失効します。
 
-RBAC support (requires `rbac`):
+RBAC（`rbac` が必要）：
 
-- `RTokenManager::login_with_roles()`: issues a token with associated roles.
-- `RTokenManager::set_roles()`: updates roles for an existing token.
-- `RTokenManager::get_roles()`: retrieves roles for a token.
-- `RUser.roles`: vector of roles associated with the authenticated user.
-- `RUser::has_role()`: checks if the user has a specific role.
-- `RTokenRedisManager::login_with_roles()`: issues a token with roles in Redis.
-- `RTokenRedisManager::set_roles()`: updates roles for a token in Redis.
-- `RTokenRedisManager::get_roles()`: retrieves roles for a token in Redis.
-- `RTokenRedisManager::validate()`: returns both `user_id` and `roles` when RBAC is enabled.
+- `RTokenManager::login_with_roles()`: roles を紐づけた token を発行します。
+- `RTokenManager::set_roles()`: 既存 token の roles を更新します。
+- `RTokenManager::get_roles()`: token の roles を取得します。
+- `RUser.roles`: 認証済みユーザーに紐づく roles（`Vec<String>`）。
+- `RUser::has_role()`: 指定 role を持つか判定します。
+- `RTokenRedisManager::login_with_roles()`: Redis に roles 付き token を発行します。
+- `RTokenRedisManager::set_roles()`: Redis 上の token の roles を更新します。
+- `RTokenRedisManager::get_roles()`: Redis 上の token の roles を取得します。
+- `RTokenRedisManager::validate()`: RBAC 有効時は `user_id` と `roles` を返します。
 
-## In-memory usage (actix-web)
+## インメモリ利用例（actix-web）
 
-### 1. Add endpoints
+### 1. エンドポイントを追加
 
-No manual header parsing is needed. Inject `RUser` into protected handlers.
+手動で header を解析する必要はありません。保護したい handler に `RUser` を引数として追加します。
 
 ```rust
 use actix_web::{get, post, web, HttpResponse, Responder};
@@ -141,9 +143,9 @@ async fn logout(
 }
 ```
 
-### 2. Register and Run
+### 2. 登録して起動
 
-Initialize `RTokenManager` and register it with your Actix application.
+`RTokenManager` を初期化し、Actix の app state に登録します。
 
 ```rust
 use actix_web::{web, App, HttpServer};
@@ -166,11 +168,11 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-## RBAC usage (role-based access control)
+## RBAC 利用例（role-based access control）
 
-When the `rbac` feature is enabled, you can assign roles to tokens and perform role-based authorization.
+`rbac` feature を有効にすると、token に roles を紐づけてロールベースの認可を行えます。
 
-### In-memory RBAC
+### インメモリ RBAC
 
 ```rust
 use r_token::{RTokenManager, RUser, RTokenError};
@@ -181,7 +183,7 @@ async fn login(
     manager: web::Data<RTokenManager>,
     body: String,
 ) -> Result<impl Responder, RTokenError> {
-    // Parse user_id and roles from request body
+    // Example: Parse user_id and roles from request body
     let parts: Vec<&str> = body.split(':').collect();
     let user_id = parts[0];
     let roles: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
@@ -204,12 +206,12 @@ async fn promote(
     manager: web::Data<RTokenManager>,
     user: RUser,
 ) -> Result<impl Responder, RTokenError> {
-    // Only admins can promote users
+    // Example: Only admins can promote users
     if !user.has_role("admin") {
         return Ok(HttpResponse::Forbidden().body("Access denied"));
     }
 
-    // Add 'moderator' role to the current user
+    // Example: Add 'moderator' role to the current user
     manager.set_roles(&user.token, vec!["admin".to_string(), "moderator".to_string()])?;
     Ok(HttpResponse::Ok().body("Promoted to moderator"))
 }
@@ -252,52 +254,52 @@ async fn main() -> Result<(), redis::RedisError> {
 }
 ```
 
-## Behavioral details
+## 振る舞いの詳細
 
-In-memory manager:
+インメモリマネージャ：
 
-- `RTokenManager::login(user_id, ttl_seconds)` returns a UUID v4 token string.
-- `RTokenManager::renew(token, ttl_seconds)` extends an existing token lifetime.
-- `RTokenManager::rotate(token, ttl_seconds)` issues a new token and revokes the old one.
-- `RTokenManager::ttl_seconds(token)` returns remaining TTL.
-- Expiration is tracked by storing an absolute expiration timestamp (milliseconds since Unix epoch).
-- Expired tokens are removed when you call `validate()` (and will otherwise remain in memory).
-- You can proactively remove expired tokens via `RTokenManager::prune_expired()`.
-- `RTokenManager::logout(token)` is idempotent: revoking a non-existent token is treated as success.
+- `RTokenManager::login(user_id, ttl_seconds)` は UUID v4 の token 文字列を返します。
+- `RTokenManager::renew(token, ttl_seconds)` は既存 token の期限を延長します。
+- `RTokenManager::rotate(token, ttl_seconds)` は新 token を発行し、旧 token を失効させます。
+- `RTokenManager::ttl_seconds(token)` は残り TTL（秒）を返します。
+- 期限は「Unix epoch ミリ秒の絶対時刻」として保存して追跡します。
+- 期限切れ token は `validate()` 呼び出し時に削除されます（それ以外のタイミングでは残り続けます）。
+- `RTokenManager::prune_expired()` で期限切れ token を能動的に掃除できます。
+- `RTokenManager::logout(token)` は冪等です。存在しない token を失効しても成功扱いです。
 
-Actix extractor:
+Actix extractor：
 
-- On success, `RUser` provides `id` and the raw `token`.
-- When RBAC is enabled, `RUser` also provides `roles` (a vector of role strings).
-- `RUser::has_role(role)` checks if the user has a specific role.
-- Failure modes:
-  - `401 Unauthorized`: missing token, invalid token, or expired token.
-  - `500 Internal Server Error`: token manager missing from `app_data`, or internal mutex poisoned.
+- 成功時、`RUser` は `id` と生の `token` を提供します。
+- RBAC 有効時は `RUser.roles` も提供されます（role 文字列の `Vec<String>`）。
+- `RUser::has_role(role)` は指定 role を持つか判定します。
+- 失敗時：
+  - `401 Unauthorized`: token が無い／不正／期限切れ。
+  - `500 Internal Server Error`: `app_data` にマネージャが無い／内部 mutex が poisoned。
 
-Redis manager:
+Redis マネージャ：
 
-- `RTokenRedisManager::login(user_id, ttl_seconds)` stores `prefix + token` as the key and `user_id` as the value, with Redis TTL set to `ttl_seconds`.
-- `RTokenRedisManager::renew(token, ttl_seconds)` updates the Redis TTL for the token key.
-- `RTokenRedisManager::rotate(token, ttl_seconds)` issues a new token and deletes the old key.
-- `RTokenRedisManager::ttl_seconds(token)` returns Redis TTL semantics for the token key.
-- `validate(token)` returns `Ok(None)` when the key is absent (revoked or expired).
-- When RBAC is enabled, `validate(token)` returns `Ok(Some(user_id))` (roles require `validate_with_roles(token)`).
-- When RBAC is enabled, `validate_with_roles(token)` returns `Ok(Some((user_id, roles)))`.
-- `logout(token)` deletes the key and is idempotent.
+- `RTokenRedisManager::login(user_id, ttl_seconds)` は `prefix + token` を key、`user_id` を value として保存し、TTL を `ttl_seconds`（秒）に設定します。
+- `RTokenRedisManager::renew(token, ttl_seconds)` は token key の Redis TTL を更新します。
+- `RTokenRedisManager::rotate(token, ttl_seconds)` は新 token を発行し、旧 key を削除します。
+- `RTokenRedisManager::ttl_seconds(token)` は token key の Redis TTL（Redis の意味論）を返します。
+- `validate(token)` は key が無い（失効済み/期限切れ）とき `Ok(None)` を返します。
+- RBAC 有効時、`validate(token)` は `Ok(Some(user_id))` を返します（roles が必要なら `validate_with_roles(token)`）。
+- RBAC 有効時、`validate_with_roles(token)` は `Ok(Some((user_id, roles)))` を返します。
+- `logout(token)` は key を削除し、冪等です。
 
-RBAC behavior:
+RBAC の挙動：
 
-- Tokens can be created with roles via `login_with_roles()`.
-- Roles can be updated on existing tokens via `set_roles()`.
-- Roles can be retrieved via `get_roles()`.
-- When RBAC is enabled, `RUser.roles` is available (empty vector if no roles were assigned).
-- `RUser::has_role()` performs a case-sensitive string comparison.
+- `login_with_roles()` で roles 付き token を作れます。
+- `set_roles()` で既存 token の roles を更新できます。
+- `get_roles()` で roles を取得できます。
+- RBAC 有効時は `RUser.roles` が利用できます（roles 未設定なら空ベクタ）。
+- `RUser::has_role()` は大文字小文字を区別して比較します。
 
-## Redis/Valkey usage
+## Redis/Valkey 利用例
 
-If you want token persistence and Redis-managed TTL expiration, enable `redis` (or `redis-actix`) and use `RTokenRedisManager`.
+token を永続化し、期限切れを Redis の TTL で管理したい場合は `redis`（または `redis-actix`）を有効にし、`RTokenRedisManager` を使います。
 
-You also need a Tokio runtime in your application (do not rely on transitive dependencies):
+アプリ側で Tokio runtime も必要です（推移的依存に頼らないでください）：
 
 ```toml
 [dependencies]
@@ -321,55 +323,55 @@ async fn main() -> Result<(), redis::RedisError> {
 }
 ```
 
-## Usage examples (curl)
+## 利用例（curl）
 
 ### Login
 
 ```bash
 curl -X POST http://127.0.0.1:8080/login -d "alice"
-# Response: 550e8400-e29b-41d4-a716-446655440000
+# レスポンス例: 550e8400-e29b-41d4-a716-446655440000
 ```
 
-### Access Protected Resource
+### 保護されたリソースにアクセス
 
 ```bash
-# Without Token -> 401 Unauthorized
+# token 無し -> 401 Unauthorized
 curl http://127.0.0.1:8080/info
 
-# With Token -> 200 OK
+# token あり -> 200 OK
 curl -H "Authorization: <token>" http://127.0.0.1:8080/info
 ```
 
-## Example servers in this repo
+## このリポジトリのサンプルサーバー
 
-### In-memory (actix-web)
+### インメモリ（actix-web）
 
 ```bash
 cargo run --bin r-token
 ```
 
-### Redis/Valkey (actix-web)
+### Redis/Valkey（actix-web）
 
-Environment variables:
+環境変数：
 
-- `REDIS_URL` (default: `redis://127.0.0.1/`)
-- `R_TOKEN_PREFIX` (default: `r_token:token:`)
+- `REDIS_URL`（デフォルト：`redis://127.0.0.1/`）
+- `R_TOKEN_PREFIX`（デフォルト：`r_token:token:`）
 
 ```bash
 REDIS_URL=redis://127.0.0.1/ cargo run --bin r-token-redis --features redis-actix
 ```
 
-## Roadmap
+## ロードマップ
 
-- [x] In-memory token management + extractor
-- [x] Token expiration (TTL)
-- [x] Redis/Valkey backend token storage (optional)
-- [x] Role-based access control (RBAC)
-- [x] Cookie support
-- [x] In-memory token validation API (non-actix)
-- [x] Redis actix-web extractor (parameter-as-authentication)
-- [x] Configurable token sources (header/cookie name, priority)
+- [x] インメモリ token 管理 + extractor
+- [x] token 期限（TTL）
+- [x] Redis/Valkey バックエンド（任意）
+- [x] ロールベースアクセス制御（RBAC）
+- [x] Cookie 対応
+- [x] インメモリ token 検証 API（non-actix）
+- [x] Redis actix-web extractor（parameter-as-authentication）
+- [x] token 取得元の設定（header/cookie 名、優先順位）
 
-## License
+## ライセンス
 
 MIT
