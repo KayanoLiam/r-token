@@ -11,8 +11,8 @@
 //! Error types for r-token.
 //!
 //! The library intentionally keeps its own error type small. It is primarily used
-//! by [`crate::RTokenManager`] methods and can also be returned from actix-web handlers
-//! because it implements `actix_web::ResponseError`.
+//! by [`crate::RTokenManager`] methods and can also be returned from HTTP framework handlers
+//! (actix-web / axum) via framework-specific response conversions.
 
 use std::fmt::Formatter;
 
@@ -47,3 +47,14 @@ impl std::error::Error for RTokenError {}
 
 #[cfg(feature = "actix")]
 impl actix_web::ResponseError for RTokenError {}
+
+#[cfg(feature = "axum")]
+impl ::axum::response::IntoResponse for RTokenError {
+    fn into_response(self) -> ::axum::response::Response {
+        (
+            ::axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            self.to_string(),
+        )
+            .into_response()
+    }
+}

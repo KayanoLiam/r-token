@@ -10,11 +10,11 @@
 //!
 //! ## 日本語
 //!
-//! actix-web 向けの軽量なインメモリ token 認証ヘルパーです。
+//! actix-web / axum 向けの軽量なインメモリ token 認証ヘルパーです。
 //!
 //! このライブラリは主に次の 2 つを提供します：
 //! - [`RTokenManager`]: token（UUID v4）の発行/失効と、インメモリストアの管理
-//! - [`RUser`]: `Authorization` を自動検証する actix-web extractor
+//! - [`RUser`]: `Authorization` を自動検証する extractor（actix-web / axum）
 //!
 //! ## 認証の流れ
 //!
@@ -27,11 +27,11 @@
 //!
 //! ## English
 //!
-//! A small, in-memory token authentication helper for actix-web.
+//! A small, in-memory token authentication helper for actix-web and axum.
 //!
 //! The library exposes two main building blocks:
 //! - [`RTokenManager`]: issues and revokes tokens (UUID v4) and keeps an in-memory store.
-//! - [`RUser`]: an actix-web extractor that validates `Authorization` automatically.
+//! - [`RUser`]: an extractor that validates `Authorization` automatically (actix-web / axum).
 //!
 //! ## How authentication works
 //!
@@ -41,8 +41,10 @@
 //!    - `Authorization: <token>`
 //!    - `Authorization: Bearer <token>`
 //! 4. Any handler that declares an [`RUser`] parameter becomes a protected endpoint. If extraction
-//!    succeeds, the request is considered authenticated; otherwise actix-web returns an error.
+//!    succeeds, the request is considered authenticated; otherwise the framework returns an error.
 
+#[cfg(feature = "axum")]
+mod axum_support;
 mod memory;
 mod models;
 #[cfg(feature = "redis")]
@@ -65,7 +67,7 @@ mod redis;
 /// - the actix extractors when reading the token from cookies
 pub const TOKEN_COOKIE_NAME: &str = "r_token";
 
-#[cfg(feature = "actix")]
+#[cfg(any(feature = "actix", feature = "axum"))]
 #[derive(Clone, Debug)]
 /// ## 日本語
 ///
@@ -93,11 +95,13 @@ pub enum TokenSourcePriority {
     CookieFirst,
 }
 
-#[cfg(feature = "actix")]
+#[cfg(any(feature = "actix", feature = "axum"))]
 #[derive(Clone, Debug)]
 /// ## 日本語
 ///
 /// actix extractor の token 取得元を設定します。
+///
+/// axum でも同じ設定を使えます（`Extension<TokenSourceConfig>` として注入）。
 ///
 /// `app_data(web::Data<TokenSourceConfig>)` として登録すると、次をカスタマイズできます：
 /// - どの header 名を順に探索するか
@@ -107,6 +111,8 @@ pub enum TokenSourcePriority {
 /// ## English
 ///
 /// Token source configuration for actix extractors.
+///
+/// The same config can also be used by axum (inject via `Extension<TokenSourceConfig>`).
 ///
 /// You can register this as `app_data(web::Data<TokenSourceConfig>)` to customize:
 /// - which header names are scanned for a token
@@ -139,7 +145,7 @@ pub struct TokenSourceConfig {
     pub cookie_names: Vec<String>,
 }
 
-#[cfg(feature = "actix")]
+#[cfg(any(feature = "actix", feature = "axum"))]
 impl Default for TokenSourceConfig {
     fn default() -> Self {
         Self {
@@ -147,6 +153,43 @@ impl Default for TokenSourceConfig {
             header_names: vec!["Authorization".to_string()],
             cookie_names: vec![TOKEN_COOKIE_NAME.to_string(), "token".to_string()],
         }
+    }
+}
+
+#[cfg(any(feature = "actix", feature = "axum"))]
+pub(crate) fn extract_token_with_config(
+    cfg: &TokenSourceConfig,
+    mut header_value: impl FnMut(&str) -> Option<String>,
+    mut cookie_value: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    // 日本語: header/cookie のどちらから token を取るかは設定の優先順位で決める。
+    // English: Choose header vs cookie based on configured priority.
+    let mut from_headers = || {
+        // 日本語: 複数の header 名を順に試し、最初に見つかった値を token として扱う。
+        //        "Bearer <token>" と "<token>" の両方を受け付ける。
+        // English: Try header names in order and take the first match.
+        //          Accept both "Bearer <token>" and raw "<token>".
+        cfg.header_names.iter().find_map(|name| {
+            header_value(name).map(|token_str| {
+                token_str
+                    .strip_prefix("Bearer ")
+                    .unwrap_or(token_str.as_str())
+                    .to_string()
+            })
+        })
+    };
+
+    // 日本語: 複数の cookie 名を順に試し、最初に見つかった値を token として扱う。
+    // English: Try cookie names in order and take the first match.
+    let mut from_cookies = || cfg.cookie_names.iter().find_map(|name| cookie_value(name));
+
+    match cfg.priority {
+        // 日本語: HeaderFirst は header を優先し、無ければ cookie を見る。
+        // English: HeaderFirst prefers headers, falling back to cookies.
+        TokenSourcePriority::HeaderFirst => from_headers().or_else(from_cookies),
+        // 日本語: CookieFirst は cookie を優先し、無ければ header を見る。
+        // English: CookieFirst prefers cookies, falling back to headers.
+        TokenSourcePriority::CookieFirst => from_cookies().or_else(from_headers),
     }
 }
 
@@ -195,49 +238,23 @@ pub fn extract_token_from_request_with_config(
     req: &actix_web::HttpRequest,
     cfg: &TokenSourceConfig,
 ) -> Option<String> {
-    // 日本語: header 名を順に見て、最初に見つかった token を返す。
-    //        `Authorization: Bearer <token>` と `Authorization: <token>` の両方に対応する。
-    //        - 値が UTF-8 でない header は無視する（to_str() が失敗するため）
-    // English: Scan header names in order and return the first token found.
-    //          Supports both `Authorization: Bearer <token>` and raw `Authorization: <token>`.
-    //          - Non-UTF8 headers are ignored (to_str() fails)
-    let from_headers = || {
-        cfg.header_names.iter().find_map(|name| {
+    extract_token_with_config(
+        cfg,
+        |name| {
             req.headers()
                 .get(name)
                 .and_then(|h| h.to_str().ok())
-                .map(|token_str| {
-                    token_str
-                        .strip_prefix("Bearer ")
-                        .unwrap_or(token_str)
-                        .to_string()
-                })
-        })
-    };
-
-    // 日本語: cookie 名を順に見て、最初に見つかった token を返す（cookie value をそのまま使う）。
-    // English: Scan cookie names in order and return the first token found (uses cookie value as-is).
-    let from_cookies = || {
-        cfg.cookie_names
-            .iter()
-            .find_map(|name| req.cookie(name).map(|cookie| cookie.value().to_string()))
-    };
-
-    // 日本語: 設定された優先順位に従って header/cookie を選ぶ。
-    //        両方に token がある場合でも「どちらを優先するか」をここで決める。
-    // English: Choose header vs cookie by configured priority.
-    //          This decides which source wins when both are present.
-    match cfg.priority {
-        TokenSourcePriority::HeaderFirst => from_headers().or_else(from_cookies),
-        TokenSourcePriority::CookieFirst => from_cookies().or_else(from_headers),
-    }
+                .map(|s| s.to_string())
+        },
+        |name| req.cookie(name).map(|cookie| cookie.value().to_string()),
+    )
 }
 
 pub use crate::memory::RTokenManager;
-#[cfg(feature = "actix")]
+#[cfg(any(feature = "actix", feature = "axum"))]
 pub use crate::memory::RUser;
 pub use crate::models::RTokenError;
-#[cfg(all(feature = "redis", feature = "actix"))]
+#[cfg(all(feature = "redis", any(feature = "actix", feature = "axum")))]
 pub use crate::redis::RRedisUser;
 #[cfg(feature = "redis")]
 pub use crate::redis::RTokenRedisManager;

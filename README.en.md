@@ -2,150 +2,102 @@
 
 README: [日本語](README.md) | English (this page)
 
-**r-token** is a small token authentication helper for Rust and `actix-web`.
+**r-token** is a token authentication helper for Rust. It supports both `actix-web` and `axum`: declare an extractor (`RUser` / `RRedisUser`) as a handler parameter, and you get an authenticated request context without manual token parsing.
 
-It provides two token managers:
+It provides two backends:
 
-- **In-memory**: `RTokenManager` stores tokens in memory with an expiration timestamp.
-- **Redis/Valkey** (optional): `RTokenRedisManager` stores tokens in Redis with TTL.
+- **In-memory**: `RTokenManager` (expiration tracked as an absolute timestamp in Unix epoch milliseconds)
+- **Redis/Valkey** (optional): `RTokenRedisManager` (expiration enforced by Redis TTL seconds)
 
-For `actix-web`, r-token follows a “parameter-as-authentication” style: add `RUser` to handler parameters, and the request is authenticated automatically via the Actix extractor mechanism.
+## Highlights
 
-## Features
-
-- **Zero boilerplate**: no custom middleware required for basic header auth.
-- **Extractor-first**: declaring `RUser` protects the route.
-- **Thread-safe, shared state**: `RTokenManager` is `Clone` and shares an in-memory store.
-- **TTL support**:
-  - In-memory: tokens expire based on a per-login TTL (seconds).
-  - Redis/Valkey: expiration is enforced by Redis TTL (seconds).
-- **Redis/Valkey backend (optional)**: `RTokenRedisManager` stores `user_id` by token key.
+- **Extractor-first**: protect routes by declaring `RUser` / `RRedisUser`
+- **Low boilerplate**: no custom middleware needed for header/cookie auth
+- **TTL support**: in-memory TTL and Redis TTL
+- **Configurable token sources**: control header/cookie names and priority via `TokenSourceConfig`
+- **RBAC (optional)**: assign and validate roles (`rbac` feature)
 
 ## Security notes
 
-- This library implements bearer-token authentication. Always use HTTPS in production.
-- Token strings grant access. Treat them like passwords: do not log them, do not store them in plaintext client storage without careful threat modeling.
-- The Redis backend stores `user_id` as the Redis value. If you need stronger protection against Redis data disclosure, consider storing a hashed token (not currently implemented by this crate).
-
-## Status
-
-This project is in active development. Review the source code and tests before adopting it in security-sensitive environments.
-
-We have released a stable version, but the API is not yet frozen. We will maintain backward compatibility and will not introduce breaking changes.
+- This is bearer-token auth. Always use HTTPS in production.
+- Token strings grant access. Treat them like passwords: do not log them, and do not store them in plaintext client storage without careful threat modeling.
+- The Redis backend stores `user_id` as the Redis value (JSON when RBAC is enabled). If Redis data disclosure is a concern, consider storing a hashed token as the key (not implemented by this crate yet).
 
 ## Installation
 
-Add r-token to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-r-token = "1.0.2"
+r-token = "1.1.0"
 ```
 
 ## Feature flags
 
 r-token uses Cargo features to keep dependencies optional:
 
-- `actix` (default): enables the `RUser` extractor and actix-web integration.
-- `redis`: enables Redis/Valkey support via the `redis` crate.
-- `redis-actix`: convenience feature = `redis` + `actix`.
-- `rbac`: enables role-based access control (RBAC) support.
+- `actix` (default): actix-web integration (extractors for actix)
+- `axum`: axum integration (extractors for axum)
+- `redis`: Redis/Valkey backend (requires Tokio runtime)
+- `redis-actix`: convenience feature = `redis` + `actix`
+- `redis-axum`: convenience feature = `redis` + `axum`
+- `rbac`: role-based access control support (Serde)
 
 Examples:
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.2", default-features = false }
+r-token = { version = "1.1.0", default-features = false, features = ["axum"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.2", features = ["redis-actix"] }
+r-token = { version = "1.1.0", features = ["redis-actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.0.2", features = ["rbac"] }
+r-token = { version = "1.1.0", features = ["redis-axum", "rbac"] }
 ```
 
-```toml
-[dependencies]
-r-token = { version = "1.0.2", features = ["redis-actix", "rbac"] }
-```
+## Where tokens come from
 
-## Authorization header
+By default, tokens are read from `Authorization` header and/or cookies.
 
-The `RUser` extractor (and the Redis example server) reads the token from `Authorization` and supports:
+Supported header formats:
 
 ```text
 Authorization: <token>
 Authorization: Bearer <token>
 ```
 
-## API overview
+Cookies are searched by name (default includes `r_token` and `token`). You can control names and priority via `TokenSourceConfig`.
 
-Core types:
+## Quickstart (actix-web / in-memory)
 
-- `RTokenManager` (always available): issues and revokes tokens in memory.
-- `RTokenError` (always available): error type used by in-memory manager.
-
-Actix integration (requires `actix`, enabled by default):
-
-- `RUser`: `actix_web::FromRequest` extractor that validates `Authorization`.
-
-Redis backend (requires `redis`):
-
-- `RTokenRedisManager`: issues, validates, and revokes tokens backed by Redis/Valkey.
-
-RBAC support (requires `rbac`):
-
-- `RTokenManager::login_with_roles()`: issues a token with associated roles.
-- `RTokenManager::set_roles()`: updates roles for an existing token.
-- `RTokenManager::get_roles()`: retrieves roles for a token.
-- `RUser.roles`: vector of roles associated with the authenticated user.
-- `RUser::has_role()`: checks if the user has a specific role.
-- `RTokenRedisManager::login_with_roles()`: issues a token with roles in Redis.
-- `RTokenRedisManager::set_roles()`: updates roles for a token in Redis.
-- `RTokenRedisManager::get_roles()`: retrieves roles for a token in Redis.
-- `RTokenRedisManager::validate()`: returns both `user_id` and `roles` when RBAC is enabled.
-
-## In-memory usage (actix-web)
-
-### 1. Add endpoints
-
-No manual header parsing is needed. Inject `RUser` into protected handlers.
+No manual parsing: declare `RUser` in protected handlers.
 
 ```rust
 use actix_web::{get, post, web, HttpResponse, Responder};
-use r_token::{RTokenManager, RUser, RTokenError};
+use r_token::{RTokenError, RTokenManager, RUser};
 
 #[post("/login")]
-async fn login(
-    manager: web::Data<RTokenManager>,
-    body: String,
-) -> Result<impl Responder, RTokenError> {
-    let token = manager.login(&body, 3600)?;
+async fn login(manager: web::Data<RTokenManager>, body: String) -> Result<impl Responder, RTokenError> {
+    let token = manager.login(body.trim(), 3600)?;
     Ok(HttpResponse::Ok().body(token))
 }
 
-#[get("/info")]
-async fn info(user: RUser) -> impl Responder {
-    format!("info: {}", user.id)
+#[get("/profile")]
+async fn profile(user: RUser) -> impl Responder {
+    format!("Profile: {}", user.id)
 }
 
 #[post("/logout")]
-async fn logout(
-    manager: web::Data<RTokenManager>,
-    user: RUser,
-) -> Result<impl Responder, RTokenError> {
+async fn logout(manager: web::Data<RTokenManager>, user: RUser) -> Result<impl Responder, RTokenError> {
     manager.logout(&user.token)?;
-    Ok(HttpResponse::Ok().body("Logged out successfully"))
+    Ok(HttpResponse::Ok().body("Logged out"))
 }
 ```
 
-### 2. Register and Run
-
-Initialize `RTokenManager` and register it with your Actix application.
+Register the manager in Actix application state:
 
 ```rust
 use actix_web::{web, App, HttpServer};
@@ -154,225 +106,112 @@ use r_token::RTokenManager;
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let manager = RTokenManager::new();
-
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(manager.clone()))
-            .service(login)
-            .service(info)
-            .service(logout)
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+    HttpServer::new(move || App::new().app_data(web::Data::new(manager.clone())))
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
 }
 ```
 
-## RBAC usage (role-based access control)
+## Quickstart (axum / in-memory)
 
-When the `rbac` feature is enabled, you can assign roles to tokens and perform role-based authorization.
-
-### In-memory RBAC
+Inject the manager via `Extension`; `RUser` works as a handler parameter.
 
 ```rust
-use r_token::{RTokenManager, RUser, RTokenError};
-use actix_web::{get, post, web, HttpResponse, Responder};
+use axum::{Router, extract::Extension, routing::get};
+use r_token::{RTokenManager, RUser};
 
-#[post("/login")]
-async fn login(
-    manager: web::Data<RTokenManager>,
-    body: String,
-) -> Result<impl Responder, RTokenError> {
-    // Parse user_id and roles from request body
-    let parts: Vec<&str> = body.split(':').collect();
-    let user_id = parts[0];
-    let roles: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-
-    let token = manager.login_with_roles(user_id, 3600, roles)?;
-    Ok(HttpResponse::Ok().body(token))
+async fn profile(user: RUser) -> String {
+    format!("Profile: {}", user.id)
 }
-
-#[get("/admin")]
-async fn admin_only(user: RUser) -> impl Responder {
-    if user.has_role("admin") {
-        HttpResponse::Ok().body(format!("Welcome, admin {}", user.id))
-    } else {
-        HttpResponse::Forbidden().body("Access denied: admin role required")
-    }
-}
-
-#[post("/promote")]
-async fn promote(
-    manager: web::Data<RTokenManager>,
-    user: RUser,
-) -> Result<impl Responder, RTokenError> {
-    // Only admins can promote users
-    if !user.has_role("admin") {
-        return Ok(HttpResponse::Forbidden().body("Access denied"));
-    }
-
-    // Add 'moderator' role to the current user
-    manager.set_roles(&user.token, vec!["admin".to_string(), "moderator".to_string()])?;
-    Ok(HttpResponse::Ok().body("Promoted to moderator"))
-}
-
-#[get("/roles")]
-async fn get_user_roles(user: RUser) -> impl Responder {
-    HttpResponse::Ok().json(&user.roles)
-}
-```
-
-### Redis RBAC
-
-```rust
-use r_token::RTokenRedisManager;
 
 #[tokio::main]
-async fn main() -> Result<(), redis::RedisError> {
-    let manager = RTokenRedisManager::connect("redis://127.0.0.1/", "r_token:token:")
-        .await?;
-
-    // Create token with roles
-    let roles = vec!["admin".to_string(), "editor".to_string()];
-    let token = manager.login_with_roles("alice", 3600, roles).await?;
-
-    // Validate and get user info with roles
-    let user_info = manager.validate_with_roles(&token).await?;
-    if let Some((user_id, retrieved_roles)) = user_info {
-        println!("User: {}, Roles: {:?}", user_id, retrieved_roles);
-    }
-
-    // Update roles
-    manager.set_roles(&token, vec!["admin".to_string()]).await?;
-
-    // Get roles only
-    let roles = manager.get_roles(&token).await?;
-    println!("Roles: {:?}", roles);
-
-    manager.logout(&token).await?;
-    Ok(())
+async fn main() {
+    let manager = RTokenManager::new();
+    let app = Router::new().route("/profile", get(profile)).layer(Extension(manager));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:8082").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
 ```
 
-## Behavioral details
+## Redis/Valkey (token persistence)
 
-In-memory manager:
+`RTokenRedisManager` is async and requires a Tokio runtime. In both actix-web and axum, you can use the `RRedisUser` extractor when `redis` + (`actix` or `axum`) are enabled.
 
-- `RTokenManager::login(user_id, ttl_seconds)` returns a UUID v4 token string.
-- `RTokenManager::renew(token, ttl_seconds)` extends an existing token lifetime.
-- `RTokenManager::rotate(token, ttl_seconds)` issues a new token and revokes the old one.
-- `RTokenManager::ttl_seconds(token)` returns remaining TTL.
-- Expiration is tracked by storing an absolute expiration timestamp (milliseconds since Unix epoch).
-- Expired tokens are removed when you call `validate()` (and will otherwise remain in memory).
-- You can proactively remove expired tokens via `RTokenManager::prune_expired()`.
-- `RTokenManager::logout(token)` is idempotent: revoking a non-existent token is treated as success.
-
-Actix extractor:
-
-- On success, `RUser` provides `id` and the raw `token`.
-- When RBAC is enabled, `RUser` also provides `roles` (a vector of role strings).
-- `RUser::has_role(role)` checks if the user has a specific role.
-- Failure modes:
-  - `401 Unauthorized`: missing token, invalid token, or expired token.
-  - `500 Internal Server Error`: token manager missing from `app_data`, or internal mutex poisoned.
-
-Redis manager:
-
-- `RTokenRedisManager::login(user_id, ttl_seconds)` stores `prefix + token` as the key and `user_id` as the value, with Redis TTL set to `ttl_seconds`.
-- `RTokenRedisManager::renew(token, ttl_seconds)` updates the Redis TTL for the token key.
-- `RTokenRedisManager::rotate(token, ttl_seconds)` issues a new token and deletes the old key.
-- `RTokenRedisManager::ttl_seconds(token)` returns Redis TTL semantics for the token key.
-- `validate(token)` returns `Ok(None)` when the key is absent (revoked or expired).
-- When RBAC is enabled, `validate(token)` returns `Ok(Some(user_id))` (roles require `validate_with_roles(token)`).
-- When RBAC is enabled, `validate_with_roles(token)` returns `Ok(Some((user_id, roles)))`.
-- `logout(token)` deletes the key and is idempotent.
-
-RBAC behavior:
-
-- Tokens can be created with roles via `login_with_roles()`.
-- Roles can be updated on existing tokens via `set_roles()`.
-- Roles can be retrieved via `get_roles()`.
-- When RBAC is enabled, `RUser.roles` is available (empty vector if no roles were assigned).
-- `RUser::has_role()` performs a case-sensitive string comparison.
-
-## Redis/Valkey usage
-
-If you want token persistence and Redis-managed TTL expiration, enable `redis` (or `redis-actix`) and use `RTokenRedisManager`.
-
-You also need a Tokio runtime in your application (do not rely on transitive dependencies):
+Minimal Tokio dependency if your application doesn’t already have it:
 
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+## TokenSourceConfig (header/cookie names and priority)
+
+actix-web:
+
 ```rust
-use r_token::RTokenRedisManager;
+use actix_web::{web, App};
+use r_token::{TokenSourceConfig, TokenSourcePriority};
 
-#[tokio::main]
-async fn main() -> Result<(), redis::RedisError> {
-    let manager = RTokenRedisManager::connect("redis://127.0.0.1/", "r_token:token:")
-        .await?;
+let cfg = TokenSourceConfig {
+    priority: TokenSourcePriority::CookieFirst,
+    header_names: vec!["Authorization".to_string()],
+    cookie_names: vec!["r_token".to_string()],
+};
 
-    let token = manager.login("alice", 3600).await?;
-    let user_id = manager.validate(&token).await?;
-    assert_eq!(user_id.as_deref(), Some("alice"));
-
-    manager.logout(&token).await?;
-    Ok(())
-}
+App::new().app_data(web::Data::new(cfg));
 ```
 
-## Usage examples (curl)
+axum:
 
-### Login
+```rust
+use axum::{Router, extract::Extension};
+use r_token::{TokenSourceConfig, TokenSourcePriority};
 
-```bash
-curl -X POST http://127.0.0.1:8080/login -d "alice"
-# Response: 550e8400-e29b-41d4-a716-446655440000
+let cfg = TokenSourceConfig {
+    priority: TokenSourcePriority::CookieFirst,
+    header_names: vec!["Authorization".to_string()],
+    cookie_names: vec!["r_token".to_string()],
+};
+
+Router::new().layer(Extension(cfg));
 ```
 
-### Access Protected Resource
+## RBAC (roles)
 
-```bash
-# Without Token -> 401 Unauthorized
-curl http://127.0.0.1:8080/info
+Enable the `rbac` feature to attach roles to tokens.
 
-# With Token -> 200 OK
-curl -H "Authorization: <token>" http://127.0.0.1:8080/info
-```
+- In-memory: `RTokenManager::login_with_roles` / `set_roles` / `get_roles`, plus `RUser.roles` and `RUser::has_role`
+- Redis: `RTokenRedisManager::login_with_roles` / `set_roles` / `get_roles` / `validate_with_roles`, plus `RRedisUser.roles`
 
 ## Example servers in this repo
 
-### In-memory (actix-web)
+In-memory (actix-web, port 8080):
 
 ```bash
 cargo run --bin r-token
 ```
 
-### Redis/Valkey (actix-web)
-
-Environment variables:
-
-- `REDIS_URL` (default: `redis://127.0.0.1/`)
-- `R_TOKEN_PREFIX` (default: `r_token:token:`)
+Redis/Valkey (actix-web, port 8081):
 
 ```bash
-REDIS_URL=redis://127.0.0.1/ cargo run --bin r-token-redis --features redis-actix
+REDIS_URL=redis://127.0.0.1/ R_TOKEN_PREFIX=r_token:token: \
+  cargo run --bin r-token-redis --features redis-actix
 ```
 
-## Roadmap
+In-memory (axum, port 8082):
 
-- [x] In-memory token management + extractor
-- [x] Token expiration (TTL)
-- [x] Redis/Valkey backend token storage (optional)
-- [x] Role-based access control (RBAC)
-- [x] Cookie support
-- [x] In-memory token validation API (non-actix)
-- [x] Redis actix-web extractor (parameter-as-authentication)
-- [x] Configurable token sources (header/cookie name, priority)
+```bash
+cargo run --bin r-token-axum --features axum
+```
+
+Redis/Valkey (axum, port 8083):
+
+```bash
+REDIS_URL=redis://127.0.0.1/ R_TOKEN_PREFIX=r_token:token: \
+  cargo run --bin r-token-redis-axum --features redis-axum
+```
 
 ## License
 
 MIT
-

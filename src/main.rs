@@ -121,7 +121,8 @@ async fn do_logout(
 /// Starts the example server.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // 1. Initialize r-token manager (global singleton) | 初始化 r-token 管理器（全局单例）
+    // 日本語: r-token マネージャを初期化する（アプリ全体で共有する想定）
+    // English: Initialize the r-token manager (shared application state)
     let r_manager = r_token::RTokenManager::new();
 
     println!("🚀 r-token server started at http://127.0.0.1:8080");
@@ -132,14 +133,14 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         actix_web::App::new()
-            // 2. Inject global state (required!) | 注入全局状态（必须步骤！）
-            // This allows all handlers to access via web::Data<RTokenManager>
-            // 这样所有 Handler 都可以通过 web::Data<RTokenManager> 访问
+            // 日本語: マネージャを app state に注入する（handler は web::Data<RTokenManager> 経由で参照）
+            // English: Inject the manager into app state (handlers access via web::Data<RTokenManager>)
             .app_data(web::Data::new(r_manager.clone()))
-            // 3. Register route services | 注册路由服务
-            .service(do_login) // Public endpoint | 公开接口
-            .service(do_info) // Protected endpoint | 受保护接口
-            .service(do_logout) // Protected endpoint | 受保护接口
+            // 日本語: ルート登録
+            // English: Register routes
+            .service(do_login)
+            .service(do_info)
+            .service(do_logout)
     })
     .bind("127.0.0.1:8080")?
     .run()

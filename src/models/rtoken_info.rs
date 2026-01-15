@@ -31,6 +31,12 @@ pub struct RTokenInfo {
     /// Expiration timestamp in Unix epoch milliseconds.
     pub expire_at: u64,
     #[allow(unused)]
-    // Roles associated with the token.
+    /// ## 日本語
+    ///
+    /// token に紐づく roles（RBAC 用）。
+    ///
+    /// ## English
+    ///
+    /// Roles associated with the token (for RBAC).
     pub roles: Vec<String>,
 }

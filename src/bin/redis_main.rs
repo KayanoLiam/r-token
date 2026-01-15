@@ -212,33 +212,45 @@ async fn do_logout(
 /// Starts the Redis/Valkey-backed example server.
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // 讀取 Redis/Valkey 連線字串：允許透過環境變數覆蓋，否則使用本機預設。
+    // 日本語: Redis/Valkey 接続文字列を読む（環境変数で上書き可、未指定ならローカル既定）。
+    // English: Read Redis/Valkey connection URL (overridable via env var; defaults to localhost).
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    // 讀取 Redis key 前綴：用來隔離不同應用/環境的 token key（避免互相覆蓋）。
+    // 日本語: Redis key の prefix を読む（アプリ/環境の分離用）。
+    // English: Read Redis key prefix to isolate tokens across apps/environments.
     let prefix = std::env::var("R_TOKEN_PREFIX").unwrap_or_else(|_| "r_token:token:".to_string());
 
-    // 建立 Redis/Valkey 管理器：內部會建立連線管理器並保存 prefix。
+    // 日本語: Redis/Valkey マネージャを作成する（内部で接続管理と prefix を保持する）。
+    // English: Create the Redis/Valkey manager (keeps a connection manager and the prefix).
     let manager = RTokenRedisManager::connect(&redis_url, prefix)
         .await
-        // 把 Redis 連線錯誤轉成 std::io::Error，讓 main 的返回型別保持簡單（方便示例）。
+        // 日本語: 接続エラーを std::io::Error に変換して main の戻り値型を単純にする（サンプル向け）。
+        // English: Map connection errors to std::io::Error to keep main's return type simple (example).
         .map_err(|_| std::io::Error::other("Redis connect failed"))?;
 
-    // 提示啟動成功，方便用 curl 直接測試。
+    // 日本語: 起動ログ（curl での手動テストをしやすくする）。
+    // English: Startup log to make manual testing with curl easier.
     println!("r-token (redis) server started at http://127.0.0.1:8081");
 
-    // 啟動 Actix HTTP 伺服器：用 move 把 manager 捕獲進工廠閉包（每個 worker 都能 clone 使用）。
+    // 日本語: Actix HTTP サーバーを起動する。move で manager を工場クロージャにキャプチャし、
+    //        各 worker から clone して使えるようにする。
+    // English: Start the Actix HTTP server. Capture manager into the factory closure via move,
+    //          so each worker can clone and use it.
     HttpServer::new(move || {
         actix_web::App::new()
-            // 把 manager 放到 app state，handler 才能用 web::Data<RTokenRedisManager> 取到它。
+            // 日本語: manager を app state に入れる（handler は web::Data<RTokenRedisManager> で参照）。
+            // English: Put manager into app state (handlers access via web::Data<RTokenRedisManager>).
             .app_data(web::Data::new(manager.clone()))
-            // 註冊路由：/login（簽發 token）、/info（驗證 token）、/logout（註銷 token）。
+            // 日本語: ルート登録（/login: 発行、/info: 検証、/logout: 失効）。
+            // English: Register routes (/login issue, /info validate, /logout revoke).
             .service(do_login)
             .service(do_info)
             .service(do_logout)
     })
-    // 綁定監聽地址：示例固定在本機 8081。
+    // 日本語: バインド先はサンプルなので localhost:8081 に固定。
+    // English: Bind to localhost:8081 (fixed for the example).
     .bind("127.0.0.1:8081")?
-    // 開始跑 event loop；await 直到伺服器停止（或發生錯誤）。
+    // 日本語: イベントループを開始し、サーバー停止（またはエラー）まで await。
+    // English: Run the event loop and await until the server stops (or errors).
     .run()
     .await
 }

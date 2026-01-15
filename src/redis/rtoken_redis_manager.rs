@@ -39,34 +39,25 @@ use actix_web::web;
 /// key expiration is controlled by Redis TTL (seconds).
 #[derive(Clone)]
 pub struct RTokenRedisManager {
-    // Redis 里 token key 的前缀。
-    // 例如 prefix="r_token:token:"，token="abc" 时，最终 key 为 "r_token:token:abc"。
-    //
-    // 这样做的目的：
-    // 1) 避免不同项目/不同环境的 key 冲突
-    // 2) 方便后续做批量清理或按前缀筛选
+    // 日本語: Redis の token key に付ける prefix。
+    //        例: prefix="r_token:token:"、token="abc" のとき key は "r_token:token:abc"。
+    // English: Prefix for token keys in Redis.
+    //          Example: prefix="r_token:token:" and token="abc" => key "r_token:token:abc".
     prefix: String,
 
-    // 共享的异步连接管理器（Redis/Valkey 兼容）。
-    //
-    // 为什么用 Arc：
-    // - actix-web 的 app_data 里通常会 clone manager 放到多个 worker/handler 使用
-    // - clone 时我们只想增加引用计数，而不是复制连接
-    //
-    // 为什么用 tokio::Mutex：
-    // - ConnectionManager 不是 “每个方法都可并发安全调用” 的句柄
-    // - 用 Mutex 保证同一时刻只有一个任务在使用这条连接
-    //
-    // 说明：这种写法实现最简单，但高并发下会形成串行瓶颈。
-    // 如果追求更高吞吐，后续可以换成连接池（每次从池中拿一条连接）。
+    // 日本語: 共有の非同期 ConnectionManager（Redis/Valkey 互換）。
+    //        Arc: clone 時に接続を複製せず参照を共有するため。
+    //        tokio::Mutex: 同時に 1 タスクだけが接続を使うようにするため。
+    // English: Shared async ConnectionManager (Redis/Valkey compatible).
+    //          Arc shares the handle cheaply; tokio::Mutex serializes access to the connection.
     connection: Arc<Mutex<redis::aio::ConnectionManager>>,
 }
 
-#[cfg(feature = "actix")]
+#[cfg(any(feature = "actix", feature = "axum"))]
 #[derive(Debug)]
 /// ## 日本語
 ///
-/// actix-web から抽出される認証済みユーザーコンテキスト（Redis/Valkey バックエンド）です。
+/// actix-web / axum から抽出される認証済みユーザーコンテキスト（Redis/Valkey バックエンド）です。
 ///
 /// 抽出が成功した場合：
 /// - `id` は検証済みのユーザー ID
@@ -78,7 +69,7 @@ pub struct RTokenRedisManager {
 ///
 /// ## English
 ///
-/// An authenticated request context extracted from actix-web using Redis/Valkey backend.
+/// An authenticated request context extracted from actix-web / axum using Redis/Valkey backend.
 ///
 /// If extraction succeeds:
 /// - `id` is the validated user id
@@ -211,6 +202,8 @@ impl RTokenRedisManager {
     ///
     /// The `prefix` is normalized to always end with `:`.
     pub fn new(prefix: impl Into<String>, connection: redis::aio::ConnectionManager) -> Self {
+        // 日本語: prefix は常に ':' で終わるように正規化する（key を単純連結できるようにする）
+        // English: Normalize prefix to always end with ':' (so key concatenation is trivial)
         let mut prefix = prefix.into();
         if !prefix.ends_with(':') {
             prefix.push(':');
@@ -242,11 +235,17 @@ impl RTokenRedisManager {
         ttl_seconds: u64,
         roles: impl Into<Vec<String>>,
     ) -> Result<String, redis::RedisError> {
+        // 日本語: token は UUID v4 文字列で生成する
+        // English: Tokens are generated as UUID v4 strings
         let token = uuid::Uuid::new_v4().to_string();
         let key = self.key(&token);
 
+        // 日本語: 同一接続を直列化するためにロックする
+        // English: Lock to serialize access to the shared connection
         let mut connection = self.connection.lock().await;
 
+        // 日本語: RBAC 情報は JSON として保存し、expire_at も併せて保持する
+        // English: Store RBAC info as JSON and keep expire_at together with user_id/roles
         let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
             .timestamp_millis() as u64;
         let info = RTokenInfo {
@@ -262,6 +261,8 @@ impl RTokenRedisManager {
             ))
         })?;
 
+        // 日本語: TTL 付きで保存する（期限切れの削除は Redis TTL に任せる）
+        // English: Save with TTL (expiration is handled by Redis TTL)
         let _: () = connection.set_ex(key, value, ttl_seconds).await?;
         Ok(token)
     }
@@ -367,11 +368,19 @@ impl RTokenRedisManager {
         token: &str,
     ) -> Result<Option<(String, Vec<String>)>, redis::RedisError> {
         let key = self.key(token);
+        // 日本語: 同一接続を直列化するためにロックする
+        // English: Lock to serialize access to the shared connection
         let mut connection = self.connection.lock().await;
 
+        // 日本語: key が無い（期限切れで消えた等）場合は None
+        // English: Return None when key is missing (e.g. expired and removed)
         let value: Option<String> = connection.get(key).await?;
-        let Some(value) = value else { return Ok(None) };
+        let Some(value) = value else {
+            return Ok(None);
+        };
 
+        // 日本語: JSON (RTokenInfo) として読めない場合は旧形式（プレーン user_id）として扱う
+        // English: If JSON parsing fails, treat it as legacy plain user_id
         let info = serde_json::from_str::<RTokenInfo>(&value).unwrap_or(RTokenInfo {
             user_id: value,
             expire_at: 0,
@@ -410,15 +419,16 @@ impl RTokenRedisManager {
         redis_url: &str,
         prefix: impl Into<String>,
     ) -> Result<Self, redis::RedisError> {
-        // redis_url 支持如：
+        // 日本語: redis_url の例：
         // - redis://127.0.0.1/
         // - redis://:password@127.0.0.1/0
-        //
-        // Valkey 也兼容 Redis 协议，因此同样可以使用 redis crate 连接。
+        // English: Examples for redis_url:
+        // - redis://127.0.0.1/
+        // - redis://:password@127.0.0.1/0
         let client = redis::Client::open(redis_url)?;
 
-        // ConnectionManager 会在底层连接断开后自动尝试重连（以 redis crate 的实现为准），
-        // 对示例场景比较友好。
+        // 日本語: ConnectionManager は切断時に再接続を試みる（挙動は redis crate に依存）。
+        // English: ConnectionManager attempts reconnection on disconnect (behavior depends on redis crate).
         let connection = client.get_connection_manager().await?;
         Ok(Self::new(prefix, connection))
     }
@@ -468,6 +478,8 @@ impl RTokenRedisManager {
     pub async fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, redis::RedisError> {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
+        // 日本語: redis crate の API が i64 を要求するため、変換できない場合は上限に丸める
+        // English: redis crate API expects i64; saturate to i64::MAX if conversion fails
         let seconds = i64::try_from(ttl_seconds).unwrap_or(i64::MAX);
         let updated: bool = connection.expire(key, seconds).await?;
         Ok(updated)
@@ -558,7 +570,8 @@ impl RTokenRedisManager {
     ///
     /// Builds the Redis key for a token.
     fn key(&self, token: &str) -> String {
-        // 这里我们约定 prefix 总是以 ':' 结尾，因此直接拼接即可。
+        // 日本語: prefix は常に ':' で終わるよう正規化されているため、そのまま連結する。
+        // English: The prefix is normalized to always end with ':', so we can concatenate directly.
         format!("{}{}", self.prefix, token)
     }
 
@@ -579,18 +592,17 @@ impl RTokenRedisManager {
         user_id: &str,
         ttl_seconds: u64,
     ) -> Result<String, redis::RedisError> {
-        // token 的生成策略与内存版一致：UUID v4 字符串。
-        // 生产环境如果担心 Redis 泄露导致 token 可被直接利用，可以考虑存储 hash(token) 作为 key。
+        // 日本語: token の生成戦略はインメモリ版と同じ（UUID v4 文字列）。
+        // English: Token generation matches the in-memory manager (UUID v4 string).
         let token = uuid::Uuid::new_v4().to_string();
         let key = self.key(&token);
 
-        // 获取连接使用权（这里会 await，表示可能等待其他任务释放锁）。
+        // 日本語: 接続のロックを取得する（await するため、他タスクの解放待ちになることがある）。
+        // English: Acquire the connection lock (awaits if another task is holding it).
         let mut connection = self.connection.lock().await;
 
-        // SETEX 语义：SET key value 并设置 TTL（秒）。
-        // 这里 value 只存 user_id，过期交给 Redis TTL 来处理，避免应用层自己算 expire_at。
-        //
-        // `let _: () = ...` 是为了让类型推导明确知道我们不关心返回值，只要命令成功即可。
+        // 日本語: SETEX 相当（key に value を保存し TTL(秒) を設定する）。
+        // English: SETEX semantics: set key/value and configure TTL (seconds).
         let _: () = connection.set_ex(key, user_id, ttl_seconds).await?;
         Ok(token)
     }
@@ -610,10 +622,8 @@ impl RTokenRedisManager {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
 
-        // DEL 返回实际删除的 key 数量：
-        // - 1 表示删除成功
-        // - 0 表示 key 不存在
-        // 这里不关心这个数量，因为 logout 需要保持幂等。
+        // 日本語: DEL は削除件数を返すが、logout は冪等なので件数は無視する。
+        // English: DEL returns how many keys were removed; logout is idempotent so we ignore it.
         let _: i64 = connection.del(key).await?;
         Ok(())
     }
@@ -634,9 +644,12 @@ impl RTokenRedisManager {
         let key = self.key(token);
         let mut connection = self.connection.lock().await;
 
-        // GET key：
-        // - Some(user_id) => token 有效
-        // - None => token 不存在或已过期（TTL 到了被 Redis 自动删掉）
+        // 日本語: GET の結果：
+        // - Some(user_id) => token は有効（user_id が見つかった）
+        // - None => token が存在しない/期限切れ（TTL により Redis が削除済み）
+        // English: GET result:
+        // - Some(user_id) => token is valid (user_id found)
+        // - None => missing/expired (removed by Redis TTL)
         let user_id: Option<String> = connection.get(key).await?;
         Ok(user_id)
     }
