@@ -19,6 +19,7 @@ use axum::{
     extract::{Extension, FromRequestParts},
     http::{StatusCode, header, request::Parts},
 };
+use cookie::Cookie;
 
 // 日本語: Axum extractor の失敗時に返す型。
 //        ここでは「HTTP ステータス + 固定文字列ボディ」に絞って、依存と実装を最小にしている。
@@ -61,23 +62,12 @@ fn cookie_header_string(parts: &Parts) -> Option<String> {
 }
 
 fn find_cookie_value(cookie_header: &str, target_name: &str) -> Option<String> {
-    // 日本語: Cookie の最小パーサ（name=value; name2=value2 形式を想定）。
-    // English: Minimal cookie parser for "name=value; name2=value2" format.
-    //
-    // 日本語: RFC 準拠の完全な cookie パース（URL デコード等）は行わない。
-    //        本ライブラリの目的は「既知の cookie 名から token 文字列を取り出す」ことに絞る。
-    // English: This is not a full RFC-compliant cookie parser (no decoding, etc.).
-    //          It is sufficient for extracting a token from a known cookie name.
-    for part in cookie_header.split(';') {
-        let part = part.trim();
-        let Some((name, value)) = part.split_once('=') else {
-            continue;
-        };
-        if name.trim() == target_name {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
+    // 日本語: RFC 準拠の Cookie パーサで name を照合する。
+    // English: Use an RFC-compliant cookie parser and match by name.
+    Cookie::split_parse(cookie_header)
+        .filter_map(Result::ok)
+        .find(|cookie| cookie.name() == target_name)
+        .map(|cookie| cookie.value().to_string())
 }
 
 #[axum::async_trait]
@@ -139,17 +129,14 @@ where
 
         #[cfg(feature = "rbac")]
         {
-            // 日本語: 5) RBAC 有効時は user_id + roles を検証で取得する。
-            //        - Ok(Some(..)) => 有効 token
-            //        - Ok(None) => 無効/期限切れ
-            //        - Err => mutex poisoned（500 扱い）
-            // English: 5) With RBAC enabled, validate and fetch user_id + roles.
-            let user_info = manager
-                .validate_with_roles(&token)
-                .map_err(|_| internal("Mutex poisoned"))?;
+            let token_for_check = token.clone();
+            let manager = manager.clone();
+            let user_info =
+                tokio::task::spawn_blocking(move || manager.validate_with_roles(&token_for_check))
+                    .await
+                    .map_err(|_| internal("Mutex poisoned"))?
+                    .map_err(|_| internal("Mutex poisoned"))?;
             if let Some((user_id, roles)) = user_info {
-                // 日本語: 6) extractor 成功。handler 側は `RUser` を引数で受け取れる。
-                // English: 6) Extraction succeeded; handler can receive `RUser`.
                 return Ok(Self {
                     id: user_id,
                     token,
@@ -161,14 +148,13 @@ where
 
         #[cfg(not(feature = "rbac"))]
         {
-            // 日本語: 5) RBAC 無効時は user_id のみ検証で取得する。
-            // English: 5) Without RBAC, validate and fetch only user_id.
-            let user_id = manager
-                .validate(&token)
+            let token_for_check = token.clone();
+            let manager = manager.clone();
+            let user_id = tokio::task::spawn_blocking(move || manager.validate(&token_for_check))
+                .await
+                .map_err(|_| internal("Mutex poisoned"))?
                 .map_err(|_| internal("Mutex poisoned"))?;
             if let Some(user_id) = user_id {
-                // 日本語: 6) extractor 成功。
-                // English: 6) Extraction succeeded.
                 return Ok(Self { id: user_id, token });
             }
             Err(unauthorized("Invalid token"))

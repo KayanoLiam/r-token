@@ -21,6 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use cookie::{Cookie, SameSite};
 use r_token::{RTokenError, RTokenManager, RUser, TOKEN_COOKIE_NAME};
 
 async fn login(
@@ -37,8 +38,13 @@ async fn login(
         .map_err(|e: RTokenError| e.into_response())?;
 
     let mut resp = token.clone().into_response();
-    let cookie = format!("{}={}; Path=/; HttpOnly", TOKEN_COOKIE_NAME, token);
-    let cookie = HeaderValue::from_str(&cookie)
+    let cookie = Cookie::build((TOKEN_COOKIE_NAME, token))
+        .path("/")
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
+        .build();
+    let cookie = HeaderValue::from_str(cookie.to_string().as_str())
         .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Invalid cookie").into_response())?;
     resp.headers_mut().insert(header::SET_COOKIE, cookie);
     Ok(resp)

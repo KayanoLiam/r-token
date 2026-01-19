@@ -3,8 +3,53 @@ use crate::models::RTokenInfo;
 use chrono::Utc;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
+
+/// ## 日本語
+///
+/// 現在時刻の Unix epoch ミリ秒を返します。
+///
+/// ## English
+///
+/// Returns the current Unix epoch milliseconds.
+fn now_ms() -> u64 {
+    u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
+/// ## 日本語
+///
+/// `now_ms + ttl_seconds` をミリ秒で安全に加算します（飽和演算）。
+///
+/// ## English
+///
+/// Computes `now_ms + ttl_seconds` in milliseconds with saturation.
+fn add_ttl_ms(now_ms: u64, ttl_seconds: u64) -> u64 {
+    let ttl_ms = (ttl_seconds as u128).saturating_mul(1000);
+    (now_ms as u128)
+        .saturating_add(ttl_ms)
+        .min(u64::MAX as u128) as u64
+}
+
+/// ## 日本語
+///
+/// 自動掃除を実行する最小間隔（ミリ秒）。
+///
+/// ## English
+///
+/// Minimum interval for automatic pruning (milliseconds).
+const PRUNE_INTERVAL_MS: u64 = 60_000;
+/// ## 日本語
+///
+/// 自動掃除を試みる最小ストアサイズ。
+///
+/// ## English
+///
+/// Minimum store size that triggers auto-pruning.
+const PRUNE_MIN_SIZE: usize = 1024;
 
 /// ## 日本語
 ///
@@ -29,7 +74,7 @@ use std::{
 /// Tokens are generated as UUID v4 strings. Each token is associated with:
 /// - a user id (`String`)
 /// - an expiration timestamp (Unix epoch milliseconds)
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RTokenManager {
     /// ## 日本語
     ///
@@ -39,6 +84,14 @@ pub struct RTokenManager {
     ///
     /// In-memory token store.
     store: Arc<Mutex<HashMap<String, RTokenInfo>>>,
+    /// ## 日本語
+    ///
+    /// 最後に自動掃除を実行した時刻（ミリ秒）。
+    ///
+    /// ## English
+    ///
+    /// The last time auto-pruning ran (milliseconds).
+    last_prune_ms: Arc<AtomicU64>,
 }
 
 impl RTokenManager {
@@ -52,6 +105,7 @@ impl RTokenManager {
     pub fn new() -> Self {
         Self {
             store: Arc::new(Mutex::new(HashMap::new())),
+            last_prune_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -79,10 +133,7 @@ impl RTokenManager {
 
         // 日本語: expire_time は秒 TTL として扱い、現在時刻から期限 (ms) を計算する
         // English: Treat expire_time as TTL seconds and compute deadline in milliseconds
-        let now = Utc::now();
-        let ttl = chrono::Duration::seconds(expire_time as i64);
-        let deadline = now + ttl;
-        let expire_time = deadline.timestamp_millis() as u64;
+        let expire_time = add_ttl_ms(now_ms(), expire_time);
 
         // 日本語: token と紐づく情報（user_id / expire_at / roles）を作る
         // English: Build token info (user_id / expire_at / roles)
@@ -94,10 +145,10 @@ impl RTokenManager {
 
         // 日本語: mutex をロックしてストアに保存する（poisoned はライブラリのエラーに変換）
         // English: Lock the store mutex and insert (map poisoned to library error)
-        self.store
-            .lock()
-            .map_err(|_| RTokenError::MutexPoisoned)?
-            .insert(token.clone(), info);
+        let now_ms = now_ms();
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        store.insert(token.clone(), info);
+        self.maybe_prune(&mut store, now_ms);
         Ok(token)
     }
 
@@ -125,10 +176,7 @@ impl RTokenManager {
 
         // 日本語: expire_time は秒 TTL として扱い、現在時刻から期限 (ms) を計算する
         // English: Treat expire_time as TTL seconds and compute deadline in milliseconds
-        let now = Utc::now();
-        let ttl = chrono::Duration::seconds(expire_time as i64);
-        let deadline = now + ttl;
-        let expire_time = deadline.timestamp_millis() as u64;
+        let expire_time = add_ttl_ms(now_ms(), expire_time);
 
         // 日本語: roles を含む token 情報を作って保存する
         // English: Build token info including roles and store it
@@ -137,10 +185,10 @@ impl RTokenManager {
             expire_at: expire_time,
             roles: role.into(),
         };
-        self.store
-            .lock()
-            .map_err(|_| RTokenError::MutexPoisoned)?
-            .insert(token.clone(), info);
+        let now_ms = now_ms();
+        let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
+        store.insert(token.clone(), info);
+        self.maybe_prune(&mut store, now_ms);
         Ok(token)
     }
 
@@ -251,7 +299,7 @@ impl RTokenManager {
     pub fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, RTokenError> {
         // 日本語: 現在時刻 (ms) と保存された expire_at (ms) の差から残り秒数を計算する
         // English: Compute remaining seconds from now_ms and stored expire_at (milliseconds)
-        let now_ms = Utc::now().timestamp_millis() as u64;
+        let now_ms = now_ms();
         let store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
         let Some(expire_at) = store.get(token).map(|info| info.expire_at) else {
             return Ok(None);
@@ -286,9 +334,7 @@ impl RTokenManager {
     pub fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, RTokenError> {
         // 日本語: now + ttl_seconds で新しい expire_at (ms) を計算する
         // English: Compute new expire_at (ms) as now + ttl_seconds
-        let now = Utc::now();
-        let ttl = chrono::Duration::seconds(ttl_seconds as i64);
-        let expire_at = (now + ttl).timestamp_millis() as u64;
+        let expire_at = add_ttl_ms(now_ms(), ttl_seconds);
 
         // 日本語: 対象 token を更新するためストアをロックする
         // English: Lock the store to update the token
@@ -299,7 +345,7 @@ impl RTokenManager {
 
         // 日本語: 期限切れは renew 失敗として扱い、ストアから削除する
         // English: Treat expired token as failure and remove it from store
-        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+        if info.expire_at < now_ms() {
             store.remove(token);
             return Ok(false);
         }
@@ -330,9 +376,7 @@ impl RTokenManager {
     pub fn rotate(&self, token: &str, ttl_seconds: u64) -> Result<Option<String>, RTokenError> {
         // 日本語: 新 token の期限を now + ttl_seconds で計算する
         // English: Compute new token expiration as now + ttl_seconds
-        let now = Utc::now();
-        let ttl = chrono::Duration::seconds(ttl_seconds as i64);
-        let expire_at = (now + ttl).timestamp_millis() as u64;
+        let expire_at = add_ttl_ms(now_ms(), ttl_seconds);
 
         // 日本語: old token の情報を参照して新 token に引き継ぐため clone する
         // English: Clone old info so we can reuse it for the new token
@@ -343,7 +387,7 @@ impl RTokenManager {
 
         // 日本語: old token が期限切れなら削除して None を返す
         // English: If old token expired, remove it and return None
-        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+        if info.expire_at < now_ms() {
             store.remove(token);
             return Ok(None);
         }
@@ -374,7 +418,7 @@ impl RTokenManager {
     pub fn prune_expired(&self) -> Result<usize, RTokenError> {
         // 日本語: retain を使って期限切れのエントリを一括削除する
         // English: Use retain to bulk-remove expired entries
-        let now = Utc::now().timestamp_millis() as u64;
+        let now = now_ms();
         let mut store = self.store.lock().map_err(|_| RTokenError::MutexPoisoned)?;
 
         let original_len = store.len();
@@ -418,7 +462,7 @@ impl RTokenManager {
 
             // 日本語: 期限切れなら削除して無効扱いにする
             // English: If expired, remove and treat as invalid
-            if info.expire_at < Utc::now().timestamp_millis() as u64 {
+            if info.expire_at < now_ms() {
                 store.remove(token);
                 return Ok(None);
             }
@@ -454,7 +498,7 @@ impl RTokenManager {
 
         // 日本語: 期限切れなら削除して無効扱いにする
         // English: If expired, remove and treat as invalid
-        if info.expire_at < Utc::now().timestamp_millis() as u64 {
+        if info.expire_at < now_ms() {
             store.remove(token);
             return Ok(None);
         }
@@ -462,6 +506,33 @@ impl RTokenManager {
         // 日本語: user_id と roles を返す（clone して内部を露出しない）
         // English: Return user_id and roles (clone to avoid exposing internals)
         Ok(Some((info.user_id.clone(), info.roles.clone())))
+    }
+
+    /// ## 日本語
+    ///
+    /// 条件を満たす場合のみ期限切れ token を掃除します。
+    ///
+    /// ## English
+    ///
+    /// Prunes expired tokens only when the thresholds are met.
+    fn maybe_prune(&self, store: &mut HashMap<String, RTokenInfo>, now_ms: u64) {
+        if store.len() < PRUNE_MIN_SIZE {
+            return;
+        }
+
+        let last = self.last_prune_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) < PRUNE_INTERVAL_MS {
+            return;
+        }
+
+        self.last_prune_ms.store(now_ms, Ordering::Relaxed);
+        store.retain(|_token, info| info.expire_at >= now_ms);
+    }
+}
+
+impl Default for RTokenManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -551,7 +622,7 @@ impl RUser {
 #[cfg(feature = "actix")]
 impl actix_web::FromRequest for RUser {
     type Error = actix_web::Error;
-    type Future = std::future::Ready<Result<Self, Self::Error>>;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
 
     fn from_request(
         req: &actix_web::HttpRequest,
@@ -559,63 +630,66 @@ impl actix_web::FromRequest for RUser {
     ) -> Self::Future {
         use actix_web::web;
 
-        // 日本語: app_data からマネージャを取得する
-        // English: Fetch the manager from app_data
         let manager = match req.app_data::<web::Data<RTokenManager>>() {
-            Some(m) => m,
+            Some(m) => m.clone(),
             None => {
-                return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
-                    "Token manager not found",
-                )));
+                return Box::pin(async {
+                    Err(actix_web::error::ErrorInternalServerError(
+                        "Token manager not found",
+                    ))
+                });
             }
         };
         let token = match crate::extract_token_from_request(req) {
             Some(token) => token,
             None => {
-                return std::future::ready(Err(actix_web::error::ErrorUnauthorized(
-                    "Unauthorized",
-                )));
+                return Box::pin(async {
+                    Err(actix_web::error::ErrorUnauthorized("Unauthorized"))
+                });
             }
         };
 
-        #[cfg(feature = "rbac")]
-        {
-            let user_info = match manager.validate_with_roles(&token) {
-                Ok(user_info) => user_info,
-                Err(_) => {
-                    return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
-                        "Mutex poisoned",
-                    )));
-                }
-            };
+        Box::pin(async move {
+            #[cfg(feature = "rbac")]
+            {
+                let token_for_check = token.clone();
+                let manager = manager.clone();
+                let user_info = actix_web::rt::task::spawn_blocking(move || {
+                    manager.validate_with_roles(&token_for_check)
+                })
+                .await
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Mutex poisoned"))?
+                .map_err(|_| actix_web::error::ErrorInternalServerError("Mutex poisoned"))?;
 
-            if let Some((user_id, roles)) = user_info {
-                return std::future::ready(Ok(RUser {
-                    id: user_id,
-                    token,
-                    roles,
-                }));
+                if let Some((user_id, roles)) = user_info {
+                    return Ok(RUser {
+                        id: user_id,
+                        token,
+                        roles,
+                    });
+                }
+
+                Err(actix_web::error::ErrorUnauthorized("Invalid token"))
             }
 
-            std::future::ready(Err(actix_web::error::ErrorUnauthorized("Invalid token")))
-        }
+            #[cfg(not(feature = "rbac"))]
+            {
+                let token_for_check = token.clone();
+                let manager = manager.clone();
+                let user_id =
+                    actix_web::rt::task::spawn_blocking(move || manager.validate(&token_for_check))
+                        .await
+                        .map_err(|_| actix_web::error::ErrorInternalServerError("Mutex poisoned"))?
+                        .map_err(|_| {
+                            actix_web::error::ErrorInternalServerError("Mutex poisoned")
+                        })?;
 
-        #[cfg(not(feature = "rbac"))]
-        {
-            let user_id = match manager.validate(&token) {
-                Ok(user_id) => user_id,
-                Err(_) => {
-                    return std::future::ready(Err(actix_web::error::ErrorInternalServerError(
-                        "Mutex poisoned",
-                    )));
+                if let Some(user_id) = user_id {
+                    return Ok(RUser { id: user_id, token });
                 }
-            };
 
-            if let Some(user_id) = user_id {
-                return std::future::ready(Ok(RUser { id: user_id, token }));
+                Err(actix_web::error::ErrorUnauthorized("Invalid token"))
             }
-
-            std::future::ready(Err(actix_web::error::ErrorUnauthorized("Invalid token")))
-        }
+        })
     }
 }

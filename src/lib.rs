@@ -151,7 +151,7 @@ impl Default for TokenSourceConfig {
         Self {
             priority: TokenSourcePriority::HeaderFirst,
             header_names: vec!["Authorization".to_string()],
-            cookie_names: vec![TOKEN_COOKIE_NAME.to_string(), "token".to_string()],
+            cookie_names: vec![TOKEN_COOKIE_NAME.to_string()],
         }
     }
 }

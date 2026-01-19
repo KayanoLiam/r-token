@@ -67,7 +67,7 @@ It provides two backends:
 
 ```toml
 [dependencies]
-r-token = "1.1.0"
+r-token = "1.2.0"
 ```
 
 For MSRV (minimum supported Rust version), see `rust-version` in `Cargo.toml`.
@@ -87,27 +87,27 @@ Examples:
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["actix"] }
+r-token = { version = "1.2.0", default-features = false, features = ["actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["axum"] }
+r-token = { version = "1.2.0", default-features = false, features = ["axum"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", features = ["redis-actix"] }
+r-token = { version = "1.2.0", features = ["redis-actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", features = ["redis-axum", "rbac"] }
+r-token = { version = "1.2.0", features = ["redis-axum", "rbac"] }
 ```
 
 ## What should I pick? (cheat sheet)
 
-- **actix-web + in-memory**: `r-token = "1.1.0"` (default `actix`)
+- **actix-web + in-memory**: `r-token = "1.2.0"` (default `actix`)
 - **axum + in-memory**: `default-features = false, features = ["axum"]`
 - **actix-web + Redis/Valkey**: `features = ["redis-actix"]`
 - **axum + Redis/Valkey**: `features = ["redis-axum"]`
@@ -139,7 +139,7 @@ Authorization: Bearer <token>
 Cookies are searched by name (default includes `r_token` and `token`). You can override the lookup rules via `TokenSourceConfig`:
 
 - `header_names`: header names to check in order (e.g. `Authorization`, `X-Api-Token`)
-- `cookie_names`: cookie names to check in order (e.g. `r_token`, `token`)
+- `cookie_names`: cookie names to check in order (e.g. `r_token`)
 - `priority`: HeaderFirst / CookieFirst
 
 Inject configuration via:
@@ -153,7 +153,7 @@ Inject configuration via:
 
 ```toml
 [dependencies]
-r-token = "1.1.0"
+r-token = "1.2.0"
 ```
 
 ### 2) Routes (login / profile / logout)
@@ -219,7 +219,7 @@ curl -s -X POST -H "Authorization: $token" http://127.0.0.1:8080/logout
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["axum"] }
+r-token = { version = "1.2.0", default-features = false, features = ["axum"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 ```
 

@@ -14,8 +14,11 @@
 //! servers (Redis or Valkey). It mirrors the in-memory manager's behavior, but persists
 //! tokens in Redis and relies on Redis TTL for expiration.
 
-use redis::AsyncCommands;
-use std::sync::Arc;
+use redis::{AsyncCommands, Script};
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::sync::Mutex;
 
 #[cfg(feature = "rbac")]
@@ -23,6 +26,31 @@ use crate::models::RTokenInfo;
 
 #[cfg(feature = "actix")]
 use actix_web::web;
+
+/// ## 日本語
+///
+/// 現在時刻の Unix epoch ミリ秒を返します。
+///
+/// ## English
+///
+/// Returns the current Unix epoch milliseconds.
+fn now_ms_u64() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
+/// ## 日本語
+///
+/// `now_ms + ttl_seconds` をミリ秒で安全に加算します（飽和演算）。
+///
+/// ## English
+///
+/// Computes `now_ms + ttl_seconds` in milliseconds with saturation.
+fn add_ttl_ms(now_ms: u64, ttl_seconds: u64) -> u64 {
+    let ttl_ms = (ttl_seconds as u128).saturating_mul(1000);
+    (now_ms as u128)
+        .saturating_add(ttl_ms)
+        .min(u64::MAX as u128) as u64
+}
 
 /// ## 日本語
 ///
@@ -50,7 +78,8 @@ pub struct RTokenRedisManager {
     //        tokio::Mutex: 同時に 1 タスクだけが接続を使うようにするため。
     // English: Shared async ConnectionManager (Redis/Valkey compatible).
     //          Arc shares the handle cheaply; tokio::Mutex serializes access to the connection.
-    connection: Arc<Mutex<redis::aio::ConnectionManager>>,
+    connections: Arc<Vec<Mutex<redis::aio::ConnectionManager>>>,
+    next_index: Arc<AtomicUsize>,
 }
 
 #[cfg(any(feature = "actix", feature = "axum"))]
@@ -192,6 +221,33 @@ impl actix_web::FromRequest for RRedisUser {
 impl RTokenRedisManager {
     /// ## 日本語
     ///
+    /// 接続プールから次の接続をロックして取得します。
+    ///
+    /// ## English
+    ///
+    /// Locks and returns the next connection from the pool.
+    async fn lock_connection(
+        &self,
+    ) -> Result<tokio::sync::MutexGuard<'_, redis::aio::ConnectionManager>, redis::RedisError> {
+        let len = self.connections.len();
+        if len == 0 {
+            return Err(redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "no redis connections",
+            )));
+        }
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed) % len;
+        match self.connections.get(index) {
+            Some(conn) => Ok(conn.lock().await),
+            None => Err(redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "no redis connections",
+            ))),
+        }
+    }
+
+    /// ## 日本語
+    ///
     /// 既存の非同期 Redis 接続マネージャから新しいマネージャを作成します。
     ///
     /// `prefix` は常に `:` で終わるように正規化されます。
@@ -211,7 +267,8 @@ impl RTokenRedisManager {
 
         Self {
             prefix,
-            connection: Arc::new(Mutex::new(connection)),
+            connections: Arc::new(vec![Mutex::new(connection)]),
+            next_index: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -242,12 +299,11 @@ impl RTokenRedisManager {
 
         // 日本語: 同一接続を直列化するためにロックする
         // English: Lock to serialize access to the shared connection
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: RBAC 情報は JSON として保存し、expire_at も併せて保持する
         // English: Store RBAC info as JSON and keep expire_at together with user_id/roles
-        let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
-            .timestamp_millis() as u64;
+        let expire_at = add_ttl_ms(now_ms_u64(), ttl_seconds);
         let info = RTokenInfo {
             user_id: user_id.to_string(),
             expire_at,
@@ -304,7 +360,7 @@ impl RTokenRedisManager {
         roles: impl Into<Vec<String>>,
     ) -> Result<(), redis::RedisError> {
         let key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: 現在の TTL を取得して、書き戻すときに維持する
         // English: Fetch current TTL so we can preserve it on write-back
@@ -370,7 +426,7 @@ impl RTokenRedisManager {
         let key = self.key(token);
         // 日本語: 同一接続を直列化するためにロックする
         // English: Lock to serialize access to the shared connection
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: key が無い（期限切れで消えた等）場合は None
         // English: Return None when key is missing (e.g. expired and removed)
@@ -412,9 +468,13 @@ impl RTokenRedisManager {
     ///
     /// Redis/Valkey に接続してマネージャを作成します。
     ///
+    /// 内部で複数の接続を確保し、簡易的なラウンドロビンで利用します。
+    ///
     /// ## English
     ///
     /// Connects to Redis/Valkey and creates a manager.
+    ///
+    /// The manager allocates a small connection pool and uses round-robin selection.
     pub async fn connect(
         redis_url: &str,
         prefix: impl Into<String>,
@@ -429,8 +489,21 @@ impl RTokenRedisManager {
 
         // 日本語: ConnectionManager は切断時に再接続を試みる（挙動は redis crate に依存）。
         // English: ConnectionManager attempts reconnection on disconnect (behavior depends on redis crate).
-        let connection = client.get_connection_manager().await?;
-        Ok(Self::new(prefix, connection))
+        let mut connections = Vec::with_capacity(4);
+        for _ in 0..4 {
+            connections.push(Mutex::new(client.get_connection_manager().await?));
+        }
+        Ok(Self {
+            prefix: {
+                let mut prefix = prefix.into();
+                if !prefix.ends_with(':') {
+                    prefix.push(':');
+                }
+                prefix
+            },
+            connections: Arc::new(connections),
+            next_index: Arc::new(AtomicUsize::new(0)),
+        })
     }
 
     /// ## 日本語
@@ -452,7 +525,7 @@ impl RTokenRedisManager {
     /// - `Ok(Some(n))` (n >= 0) for the remaining TTL in seconds
     pub async fn ttl_seconds(&self, token: &str) -> Result<Option<i64>, redis::RedisError> {
         let key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
         let ttl: i64 = connection.ttl(key).await?;
         if ttl == -2 {
             return Ok(None);
@@ -477,7 +550,7 @@ impl RTokenRedisManager {
     /// - `Ok(false)` if the key does not exist
     pub async fn renew(&self, token: &str, ttl_seconds: u64) -> Result<bool, redis::RedisError> {
         let key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
         // 日本語: redis crate の API が i64 を要求するため、変換できない場合は上限に丸める
         // English: redis crate API expects i64; saturate to i64::MAX if conversion fails
         let seconds = i64::try_from(ttl_seconds).unwrap_or(i64::MAX);
@@ -515,51 +588,76 @@ impl RTokenRedisManager {
         // English: Build old key and fetch its value (None if missing).
         //          None means either “already expired and removed” or “never existed”.
         let old_key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
-        let value: Option<String> = connection.get(&old_key).await?;
-        let Some(value) = value else {
+        let mut raw_value: Option<String> = connection.get(&old_key).await?;
+        if raw_value.is_none() {
             return Ok(None);
-        };
+        }
 
         let new_token = uuid::Uuid::new_v4().to_string();
         let new_key = self.key(&new_token);
 
-        #[cfg(feature = "rbac")]
-        let value = {
-            // 日本語: RBAC 有効時は value が JSON（RTokenInfo）である可能性がある。
-            //        JSON として読めたときだけ expire_at を新 TTL に合わせて更新し、読めない場合は
-            //        旧形式（プレーン user_id）としてそのままコピーする。
-            // English: With RBAC enabled, value may be JSON (RTokenInfo).
-            //          If parsing succeeds, update expire_at to match new TTL; otherwise treat it
-            //          as legacy plain user_id and copy as-is.
-            let expire_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds as i64))
-                .timestamp_millis() as u64;
-            match serde_json::from_str::<RTokenInfo>(&value) {
-                Ok(mut info) => {
-                    info.expire_at = expire_at;
-                    serde_json::to_string(&info).map_err(|e| {
-                        redis::RedisError::from((
-                            redis::ErrorKind::Client,
-                            "serialize token info",
-                            e.to_string(),
-                        ))
-                    })?
+        let script = Script::new(
+            r#"
+local old_key = KEYS[1]
+local new_key = KEYS[2]
+local ttl = tonumber(ARGV[1])
+local expected = ARGV[2]
+local new_value = ARGV[3]
+
+local cur = redis.call('GET', old_key)
+if (not cur) or (cur ~= expected) then
+  return 0
+end
+
+redis.call('SETEX', new_key, ttl, new_value)
+redis.call('DEL', old_key)
+return 1
+"#,
+        );
+        for _ in 0..2 {
+            let Some(current_value) = raw_value.as_ref() else {
+                return Ok(None);
+            };
+
+            #[cfg(feature = "rbac")]
+            let new_value = {
+                let expire_at = add_ttl_ms(now_ms_u64(), ttl_seconds);
+                match serde_json::from_str::<RTokenInfo>(current_value) {
+                    Ok(mut info) => {
+                        info.expire_at = expire_at;
+                        serde_json::to_string(&info).map_err(|e| {
+                            redis::RedisError::from((
+                                redis::ErrorKind::Client,
+                                "serialize token info",
+                                e.to_string(),
+                            ))
+                        })?
+                    }
+                    Err(_) => current_value.clone(),
                 }
-                Err(_) => value,
+            };
+
+            #[cfg(not(feature = "rbac"))]
+            let new_value = current_value.clone();
+
+            let ok: i32 = script
+                .key(&old_key)
+                .key(&new_key)
+                .arg(ttl_seconds)
+                .arg(current_value)
+                .arg(&new_value)
+                .invoke_async(&mut *connection)
+                .await?;
+            if ok == 1 {
+                return Ok(Some(new_token));
             }
-        };
 
-        // 日本語: 新 key に TTL 付きで書き込み、旧 key を削除する（実質的に token ローテーション）。
-        //        set_ex が成功して del が失敗すると「二重に有効」になる可能性があるが、
-        //        ここでは簡潔さを優先している（必要なら Lua/Tx で原子的にできる）。
-        // English: Write new key with TTL, then delete old key (token rotation).
-        //          If SETEX succeeds but DEL fails, both tokens could be valid; we keep it simple
-        //          here (can be made atomic via Lua/Tx if needed).
-        let _: () = connection.set_ex(&new_key, value, ttl_seconds).await?;
-        let _: i64 = connection.del(old_key).await?;
+            raw_value = connection.get(&old_key).await?;
+        }
 
-        Ok(Some(new_token))
+        Ok(None)
     }
 
     /// ## 日本語
@@ -599,7 +697,7 @@ impl RTokenRedisManager {
 
         // 日本語: 接続のロックを取得する（await するため、他タスクの解放待ちになることがある）。
         // English: Acquire the connection lock (awaits if another task is holding it).
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: SETEX 相当（key に value を保存し TTL(秒) を設定する）。
         // English: SETEX semantics: set key/value and configure TTL (seconds).
@@ -620,7 +718,7 @@ impl RTokenRedisManager {
     /// This operation is idempotent: deleting a non-existing token is treated as success.
     pub async fn logout(&self, token: &str) -> Result<(), redis::RedisError> {
         let key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: DEL は削除件数を返すが、logout は冪等なので件数は無視する。
         // English: DEL returns how many keys were removed; logout is idempotent so we ignore it.
@@ -642,7 +740,7 @@ impl RTokenRedisManager {
     #[cfg(not(feature = "rbac"))]
     pub async fn validate(&self, token: &str) -> Result<Option<String>, redis::RedisError> {
         let key = self.key(token);
-        let mut connection = self.connection.lock().await;
+        let mut connection = self.lock_connection().await?;
 
         // 日本語: GET の結果：
         // - Some(user_id) => token は有効（user_id が見つかった）

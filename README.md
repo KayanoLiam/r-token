@@ -67,7 +67,7 @@ README: 日本語（このページ） | [English](README.en.md)
 
 ```toml
 [dependencies]
-r-token = "1.1.0"
+r-token = "1.2.0"
 ```
 
 MSRV（最小 Rust バージョン）は `Cargo.toml` の `rust-version` を参照してください。
@@ -87,27 +87,27 @@ MSRV（最小 Rust バージョン）は `Cargo.toml` の `rust-version` を参�
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["actix"] }
+r-token = { version = "1.2.0", default-features = false, features = ["actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["axum"] }
+r-token = { version = "1.2.0", default-features = false, features = ["axum"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", features = ["redis-actix"] }
+r-token = { version = "1.2.0", features = ["redis-actix"] }
 ```
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", features = ["redis-axum", "rbac"] }
+r-token = { version = "1.2.0", features = ["redis-axum", "rbac"] }
 ```
 
 ## まず何を選べばいい？（早見表）
 
-- **actix-web + in-memory で十分**: `r-token = "1.1.0"`（デフォルト `actix`）
+- **actix-web + in-memory**: `r-token = "1.2.0"`（デフォルト `actix`）
 - **axum + in-memory**: `default-features = false, features = ["axum"]`
 - **actix-web + Redis/Valkey**: `features = ["redis-actix"]`
 - **axum + Redis/Valkey**: `features = ["redis-axum"]`
@@ -136,10 +136,10 @@ Authorization: <token>
 Authorization: Bearer <token>
 ```
 
-cookie は `r_token`（既定）や `token` を順に探索します。探索ルールは `TokenSourceConfig` で変更できます：
+cookie は `r_token`（既定）を探索します。探索ルールは `TokenSourceConfig` で変更できます：
 
 - `header_names`: 順に探す header 名（例：`Authorization`、`X-Api-Token`）
-- `cookie_names`: 順に探す cookie 名（例：`r_token`、`token`）
+- `cookie_names`: 順に探す cookie 名（例：`r_token`）
 - `priority`: HeaderFirst / CookieFirst
 
 actix-web では `app_data(web::Data<TokenSourceConfig>)`、axum では `Extension(TokenSourceConfig)` で注入します。
@@ -150,7 +150,7 @@ actix-web では `app_data(web::Data<TokenSourceConfig>)`、axum では `Extensi
 
 ```toml
 [dependencies]
-r-token = "1.1.0"
+r-token = "1.2.0"
 ```
 
 ### 2) ルート（login / profile / logout）
@@ -216,7 +216,7 @@ curl -s -X POST -H "Authorization: $token" http://127.0.0.1:8080/logout
 
 ```toml
 [dependencies]
-r-token = { version = "1.1.0", default-features = false, features = ["axum"] }
+r-token = { version = "1.2.0", default-features = false, features = ["axum"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 ```
 

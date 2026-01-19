@@ -42,7 +42,7 @@
 //! curl -X POST -H "Authorization: <token>" http://127.0.0.1:8080/logout
 //! ```
 
-use actix_web::cookie::Cookie;
+use actix_web::cookie::{Cookie, SameSite};
 use actix_web::{HttpResponse, HttpServer, get, post, web};
 use r_token::{RTokenManager, RUser};
 
@@ -70,6 +70,8 @@ async fn do_login(
             Cookie::build(r_token::TOKEN_COOKIE_NAME, token.clone())
                 .path("/")
                 .http_only(true)
+                .secure(true)
+                .same_site(SameSite::Lax)
                 .finish(),
         )
         .body(token))

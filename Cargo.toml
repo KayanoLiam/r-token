@@ -1,6 +1,6 @@
 [package]
 name = "r-token"
-version = "1.1.0"
+version = "1.2.0"
 authors = ["Kayano <Kayano04@outlook.jp>"]
 description = "A simple and efficient token generation library for Rust, ideal for API authentication and session management."
 license = "MIT"
@@ -17,6 +17,7 @@ rust-version = "1.85"
 uuid = { version = "1.0", features = ["v4"] }
 actix-web = { version = "4", optional = true }
 axum = { version = "0.7", optional = true }
+cookie = { version = "0.18", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 chrono = "0.4.42"
@@ -27,7 +28,7 @@ tokio = { version = "1", optional = true, features = ["macros", "net", "rt-multi
 # 定义一个叫 "actix" 的开关，开启它就会下载 actix-web 依赖
 actix = ["dep:actix-web"]
 default = ["actix"] # 开发方便，默认开启
-axum = ["dep:axum", "dep:tokio"]
+axum = ["dep:axum", "dep:tokio", "dep:cookie"]
 redis = ["dep:redis","dep:tokio"]
 redis-actix = ["redis", "actix"]
 redis-axum = ["redis", "axum"]
